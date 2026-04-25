@@ -38,9 +38,8 @@ interface AppState {
   // back-to-back rapid prompts silently displacing one another.
   pendingQueue: NewRequest[];
   gemmaFlagsByIndex: Record<number, GemmaFlag>;
-  // On-demand per-section suggestions, fired when the user opens the editor
-  // (FR-6.6 / FR-8.6 suggestion mode). Keyed by section index since they're
-  // scoped to the currently-viewed request and reset whenever it changes.
+  // On-demand per-section suggestions, requested via the editor "Suggestions"
+  // button (FR-6.6 / FR-8.6). Keyed by section index; reset on new request.
   gemmaSuggestionsByIndex: Record<number, GemmaSuggestion>;
   // Section indices we've asked Gemma about and haven't gotten a reply for.
   // Drives the "Gemma analyzing…" spinner — without this, the spinner used
@@ -536,13 +535,8 @@ export default function App() {
     return state.editedSections.get(editorSection.index) ?? editorSection.rawContent;
   }, [editorSection, state.editedSections]);
 
-  // Fire Gemma's per-section suggestion (FR-6.6 / FR-8.6) the moment the
-  // editor opens on a section we haven't analyzed yet. Without this the
-  // EditorPanel's spinner used to imply "Gemma is analyzing" forever, even
-  // for sections nobody had asked Gemma about.
-  useEffect(() => {
-    if (!editorSection) return;
-    if (!state.currentRequest) return;
+  const requestEditorSuggestions = useCallback(() => {
+    if (!editorSection || !state.currentRequest) return;
     if (!state.gemmaAvailable) return;
     const idx = editorSection.index;
     if (state.gemmaSuggestionsByIndex[idx]) return;
@@ -643,6 +637,7 @@ export default function App() {
               suggestion={editorSuggestion}
               suggestionPending={editorSuggestionPending}
               gemmaAvailable={state.gemmaAvailable}
+              onRequestSuggestions={requestEditorSuggestions}
               onSave={(text) => onEditSection(editorSection.index, text)}
               onDelete={() => onDeleteFromEditor(editorSection.index)}
               onClose={() => dispatch({ type: "close_editor" })}

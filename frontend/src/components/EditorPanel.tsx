@@ -9,7 +9,7 @@ interface Props {
   section: Section;
   content: string;
   gemmaFlag: GemmaFlag | undefined;
-  // Per-section suggestion fired on demand when this editor opens. Carries
+  // Per-section suggestion from Gemma when the user clicks Suggestions. Carries
   // character-range highlights with their own per-range `reason` strings.
   suggestion: GemmaSuggestion | undefined;
   // True while we're waiting on a suggestion response. Drives the spinner.
@@ -17,6 +17,7 @@ interface Props {
   // which lied to the user about Gemma "still analyzing" forever.
   suggestionPending: boolean;
   gemmaAvailable: boolean;
+  onRequestSuggestions: () => void;
   onSave: (text: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -168,6 +169,7 @@ export function EditorPanel({
   suggestion,
   suggestionPending,
   gemmaAvailable,
+  onRequestSuggestions,
   onSave,
   onDelete,
   onClose,
@@ -312,6 +314,23 @@ export function EditorPanel({
               read-only · delete to skip
             </span>
           )}
+          <button
+            className="btn"
+            type="button"
+            onClick={onRequestSuggestions}
+            disabled={!gemmaAvailable || suggestionPending || !!suggestion}
+            title={
+              !gemmaAvailable
+                ? "Gemma offline"
+                : suggestion
+                  ? "Already analyzed for this section"
+                  : suggestionPending
+                    ? "Analyzing…"
+                    : "Get trim suggestions for this section"
+            }
+          >
+            Suggestions
+          </button>
           <button className="btn danger" onClick={onDelete} type="button">
             Delete section
           </button>
