@@ -122,12 +122,17 @@ export interface RequestSuggestion {
   sectionIndex: number;
 }
 
+export interface ResetCanonical {
+  type: "reset_canonical";
+}
+
 export type OutboundMessage =
   | ApproveRequest
   | ModifiedRequest
   | ModeChange
   | PauseToggle
-  | RequestSuggestion;
+  | RequestSuggestion
+  | ResetCanonical;
 
 export interface PersistedState {
   gemmaUnavailableNoticeShown: boolean;
