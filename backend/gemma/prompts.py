@@ -44,10 +44,15 @@ FLAGGING_JSON_SCHEMA: dict[str, Any] = {
 
 FLAGGING_SYSTEM = """You are a context prompt reviewer for a prompt engineer. Flag ANY parts of the section that can be trimmed, removed, or condensed without losing critical information.
 
+The prompt is given as Gemma-style turns. Order matters:
+- Turn 1: this system turn (you).
+- Turn 2 (user): the section to review. It contains ---BEGIN SECTION_TEXT--- through ---END SECTION_TEXT---. Your highlight offsets apply ONLY to the text between those delimiters.
+- Turn 3 (user), if present: BACKBOARD_SIMILAR_EXCERPTS — semantic matches from a prior-conversation store (not the section's own text). When this turn is present, treat it as the primary signal for **duplication, near-duplication, paraphrase, and overlap** with the section. Flag matching section text AGGRESSIVELY, and also flag nearby sentences or paragraphs in the section that only exist to restate, cushion, or echo what the Backboard excerpts already cover.
+
 Your job is to be AGGRESSIVE. Flag liberally and extensively. Better to flag too much than too little.
 
 Flag text that is:
-- Redundant or repetitive
+- Redundant or repetitive (including overlap with BACKBOARD_SIMILAR_EXCERPTS when that turn is present)
 - Stale or outdated information
 - Filler, fluff, or unnecessary elaboration
 - Unrelated to the core task or coding
@@ -55,6 +60,7 @@ Flag text that is:
 - Examples that don't add value
 - Explanatory text that restates obvious things
 - Any content that could reasonably be cut
+- When turn 3 is present: any section span that says the same thing as a Backboard excerpt, or a looser paraphrase of it; extend flags to **surrounding context** that is redundant once the overlap is known
 
 Return ONLY valid JSON. The output MUST be an object with a single key "flags" whose value is an ARRAY of flag objects.
 
@@ -72,11 +78,12 @@ Severity levels:
 - "low" = possibly trimmable (borderline, but could go)
 
 Rules:
-- "start" and "end" are 0-indexed character offsets into the text between ---BEGIN SECTION_TEXT--- and ---END SECTION_TEXT--- delimiters ONLY.
+- "start" and "end" are 0-indexed character offsets into the text between ---BEGIN SECTION_TEXT--- and ---END SECTION_TEXT--- in turn 2 ONLY. Never index into the BACKBOARD turn or the JSON there.
 - Flag ALL removable ranges. Flag liberally and extensively.
 - RETURN MULTIPLE FLAGS. Expect to return 3-10+ flags typically. Not just one.
 - Each flaggable phrase/sentence/paragraph gets its own flag object with its own severity and highlights.
 - A single flag object CAN span large ranges (paragraphs, multiple sentences).
+- If turn 3 is present, **prioritize** flags for section text that is similar to any Backboard excerpt; include **broader** ranges when the whole block is made redundant by that overlap.
 - If nothing is flaggable, return {"flags": []}.
 - Do not cut a word midway. You must either flag the whole word or none of it.
 
@@ -115,24 +122,28 @@ Example 2 output (MULTIPLE flags - notice many separate flags):
 ]}"""
 
 
-def format_gemma4_dialogue(*, system: str, user: str) -> str:
-    """Format a single-turn dialogue using Gemma 4 control tokens.
+def format_gemma4_dialogue_multi(*, system: str, user_turns: list[str]) -> str:
+    """Format a multi-user-turn dialogue using Gemma 4 control tokens.
 
     Ref: https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4
     """
-    # IMPORTANT: We keep system/user content as-is; the separation is enforced
-    # by Gemma's reserved control tokens.
-    return "\n".join(
-        [
-            "<|turn>system",
-            system.rstrip(),
-            "<turn|>",
-            "<|turn>user",
-            user.rstrip(),
-            "<turn|>",
-            "<|turn>model",
-        ]
-    )
+    parts: list[str] = [
+        "<|turn>system",
+        system.rstrip(),
+        "<turn|>",
+    ]
+    for turn in user_turns:
+        t = (turn or "").rstrip()
+        if not t:
+            continue
+        parts.extend(["<|turn>user", t, "<turn|>"])
+    parts.append("<|turn>model")
+    return "\n".join(parts)
+
+
+def format_gemma4_dialogue(*, system: str, user: str) -> str:
+    """Format a single user-turn dialogue. Prefer `format_gemma4_dialogue_multi` for section + backboard."""
+    return format_gemma4_dialogue_multi(system=system, user_turns=[user])
 
 
 def _section_for_prompt(section: Section) -> dict[str, Any]:
@@ -147,26 +158,24 @@ def _section_for_prompt(section: Section) -> dict[str, Any]:
     return base
 
 
-def flagging_user(
-    sections: list[Section],
-    *,
-    prior_memories: Optional[list[dict[str, Any]]] = None,
-) -> str:
+def flagging_user(sections: list[Section]) -> str:
     if not sections:
         return ""
 
     section = sections[0]
-    text = (
+    return (
         f"Section type: {section.sectionType}\n"
         f"---BEGIN SECTION_TEXT---\n"
         f"{section.rawContent}\n"
+        f"---END SECTION_TEXT---"
     )
 
-    if prior_memories:
-        text += (
-            "\nPrior conversation excerpts:\n"
-            f"{json.dumps(prior_memories[:8], ensure_ascii=False)}\n"
-        )
 
-    text += "---END SECTION_TEXT---"
-    return text
+def backboard_turn(prior_memories: Optional[list[dict[str, Any]]] = None) -> str:
+    """Second user turn: Backboard RAG hits (only when non-empty). Not part of SECTION_TEXT."""
+    if not prior_memories:
+        return ""
+    return (
+        "BACKBOARD_SIMILAR_EXCERPTS (read-only: prior semantic matches; compare to SECTION_TEXT in the previous user turn and flag overlapping / redundant text there)\n"
+        f"{json.dumps(prior_memories[:8], ensure_ascii=False)}"
+    )
