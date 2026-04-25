@@ -144,6 +144,21 @@ class ResetCanonical(BaseModel):
     type: Literal["reset_canonical"]
 
 
+class CommitEditsNow(BaseModel):
+    """Auto-mode commit: apply user edits to the canonical conversation
+    immediately, decoupled from the held-request approve flow. In held mode
+    the user clicks Send → ApproveModified does this in lockstep with
+    upstream forwarding. In auto-send mode the request has already flown
+    through, so edits affect *future* requests — the proxy applies them
+    eagerly so the panel's chart and the next forwarded body both reflect
+    the user's intent without waiting for Claude Code's next call."""
+
+    type: Literal["commit_edits_now"]
+    requestId: str
+    removedIndices: list[int] = Field(default_factory=list)
+    editedSections: list[EditedSection] = Field(default_factory=list)
+
+
 InboundMessage = Annotated[
     Union[
         Approve,
@@ -153,6 +168,7 @@ InboundMessage = Annotated[
         PauseToggle,
         RequestFlagging,
         ResetCanonical,
+        CommitEditsNow,
     ],
     Field(discriminator="type"),
 ]

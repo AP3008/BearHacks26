@@ -19,6 +19,7 @@ from models import (
     Approve,
     ApproveModified,
     Cancel,
+    CommitEditsNow,
     GemmaUnavailable,
     InboundMessage,
     ModeChange,
@@ -111,7 +112,11 @@ async def _dispatch(msg: InboundMessage) -> None:
             return
         asyncio.create_task(analyzer.flag_for_section(request_id=msg.requestId, section=section))
     elif isinstance(msg, ResetCanonical):
-        await conversation_state.reset()
+        await conversation_state.reset_edits()
+        await interceptor.broadcast_canonical_snapshot()
+    elif isinstance(msg, CommitEditsNow):
+        await conversation_state.commit_edits(msg.removedIndices, msg.editedSections)
+        await interceptor.broadcast_canonical_snapshot()
 
 
 @app.websocket("/ws")

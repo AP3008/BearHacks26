@@ -402,6 +402,19 @@ export default function App() {
     });
     dispatch({ type: "confirm_removed", indices });
     selection.clearAll();
+    // Auto-commit edits to the proxy's canonical when this request isn't
+    // gated by a Send button. In held mode the user's pending edits ride
+    // along with `approve_modified` on Send; in auto-send (or after Send)
+    // there's no later commit point, so without this the deletion would
+    // disappear the moment Claude Code sends its next prompt.
+    if (!cr.held) {
+      const merged = new Set(state.removedIndices);
+      for (const i of indices) merged.add(i);
+      const editedSections: EditedSection[] = [...state.editedSections].map(
+        ([index, newContent]) => ({ index, newContent }),
+      );
+      senders.sendCommitEditsNow(cr.requestId, [...merged], editedSections);
+    }
   }, [
     state.currentRequest,
     state.removedIndices,
@@ -409,6 +422,7 @@ export default function App() {
     selection,
     canDelete,
     undo,
+    senders,
   ]);
 
   const tryMarkSelected = useCallback(() => {
@@ -483,8 +497,23 @@ export default function App() {
   const onEditSection = useCallback(
     (index: number, content: string) => {
       dispatch({ type: "edit_section", index, content });
+      // Same auto-commit path as confirmDeletion: when the request isn't
+      // held, the editor save would otherwise be wiped on the next prompt.
+      const cr = state.currentRequest;
+      if (cr && !cr.held) {
+        const editedMap = new Map(state.editedSections);
+        editedMap.set(index, content);
+        const editedSections: EditedSection[] = [...editedMap].map(
+          ([i, newContent]) => ({ index: i, newContent }),
+        );
+        senders.sendCommitEditsNow(
+          cr.requestId,
+          [...state.removedIndices],
+          editedSections,
+        );
+      }
     },
-    [],
+    [state.currentRequest, state.removedIndices, state.editedSections, senders],
   );
 
   const onDeleteFromEditor = useCallback(
@@ -497,8 +526,25 @@ export default function App() {
       dispatch({ type: "confirm_removed", indices: [index] });
       dispatch({ type: "close_editor" });
       selection.clearAll();
+      const cr = state.currentRequest;
+      if (cr && !cr.held) {
+        const merged = new Set(state.removedIndices);
+        merged.add(index);
+        const editedSections: EditedSection[] = [...state.editedSections].map(
+          ([i, newContent]) => ({ index: i, newContent }),
+        );
+        senders.sendCommitEditsNow(cr.requestId, [...merged], editedSections);
+      }
     },
-    [state.removedIndices, state.editedSections, canDelete, undo, selection],
+    [
+      state.currentRequest,
+      state.removedIndices,
+      state.editedSections,
+      canDelete,
+      undo,
+      selection,
+      senders,
+    ],
   );
 
   const editorSection = useMemo<Section | null>(() => {

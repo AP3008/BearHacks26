@@ -9,22 +9,24 @@
 .chart-scroll {
   position: relative;
   flex: 1 1 auto;
-  overflow-x: hidden;
-  overflow-y: hidden;
+  overflow: auto;
   min-height: 0;
-}
-
-.chart-scroll.is-scroll-mode {
-  overflow-x: auto;
   scrollbar-color: var(--cl-track-thumb) transparent;
   scrollbar-width: thin;
 }
 
 .chart-svg {
   display: block;
-  width: 100%;
-  height: 100%;
   cursor: default;
+  user-select: none;
+}
+
+.column-label {
+  fill: var(--cl-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  pointer-events: none;
   user-select: none;
 }
 

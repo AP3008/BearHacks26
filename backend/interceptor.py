@@ -103,6 +103,35 @@ def _push_history(req: NewRequest) -> None:
         _history.pop(0)
 
 
+async def broadcast_canonical_snapshot() -> None:
+    """Re-classify the current canonical and push it to the panel as a
+    synthesized top-level NewRequest. Used after Reset Edits and after
+    auto-mode commit_edits_now, so the chart re-renders immediately
+    without waiting for Claude Code's next call. No-op if canonical is
+    empty (no requests have flowed through yet)."""
+    global _latest_request
+    body = await conversation_state.get_canonical()
+    if not body:
+        return
+    request_id = uuid.uuid4().hex
+    sections, total_tokens, total_cost, model = classifier.classify(body)
+    _remember(request_id, sections)
+    new_request = NewRequest(
+        requestId=request_id,
+        sections=sections,
+        totalTokens=total_tokens,
+        totalCost=total_cost,
+        model=model,
+        held=False,
+        kind="top_level",
+        lastUserPreview=_last_user_preview(body.get("messages", [])),
+        createdAt=time.time(),
+    )
+    _latest_request = new_request
+    _push_history(new_request)
+    await ws_manager.send(new_request)
+
+
 def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tuple[dict[str, Any], int]:
     """Anthropic enforces a hard cap on the number of blocks containing
     `cache_control` across the entire request. Some upstream clients (e.g. IDE
