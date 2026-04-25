@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, WebSocket
 
+import conversation_state
 import forwarder
 import gating
 import interceptor
@@ -22,6 +23,7 @@ from models import (
     ModeChange,
     PauseToggle,
     RequestSuggestion,
+    ResetCanonical,
     Snapshot,
 )
 
@@ -90,6 +92,8 @@ async def _dispatch(msg: InboundMessage) -> None:
     elif isinstance(msg, RequestSuggestion):
         sections = interceptor.recent_sections.get(msg.requestId, [])
         asyncio.create_task(analyzer.suggest(msg.requestId, msg.sectionIndex, sections))
+    elif isinstance(msg, ResetCanonical):
+        await conversation_state.reset()
 
 
 @app.websocket("/ws")

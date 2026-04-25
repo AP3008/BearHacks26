@@ -10,6 +10,7 @@ from typing import Any, Optional
 from fastapi import Request, Response
 
 import classifier
+import conversation_state
 import forwarder
 import gating
 import ws_manager
@@ -107,6 +108,18 @@ async def handle(request: Request) -> Response:
         logger.info("interceptor: missing messages array, forwarding raw")
         return await _forward_raw(raw, headers)
 
+    # Aux calls (title gen, topic detection, summarization) ship no `tools`
+    # and a tiny system prompt. They aren't part of the user's main
+    # conversation, so they bypass the canonical entirely — appending their
+    # 1-2 messages to canonical would corrupt last_seen tracking. Forward
+    # untouched, exactly like before.
+    if not conversation_state.is_main_conversation(body):
+        return await forwarder.forward_messages(body, headers)
+
+    # Merge into canonical BEFORE classifying. The bar chart, the held copy,
+    # the snapshot replay, and the upstream forward all see the same canonical.
+    body = await conversation_state.sync(body)
+
     request_id = uuid.uuid4().hex
     sections, total_tokens, total_cost, model = classifier.classify(body)
     _remember(request_id, sections)
@@ -167,7 +180,9 @@ async def handle(request: Request) -> Response:
                     len(held.removed_indices),
                     len(held.edited_sections),
                 )
-                body = gating.apply_edits(body, held.removed_indices, held.edited_sections)
+                body = await conversation_state.commit_edits(
+                    held.removed_indices, held.edited_sections
+                )
         finally:
             gating.release(request_id)
             if _held_request is not None and _held_request.requestId == request_id:
