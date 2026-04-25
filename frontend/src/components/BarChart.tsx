@@ -1,28 +1,28 @@
-import { AnimatePresence } from "motion/react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GemmaFlag, Section } from "../types";
+import { Bar } from "./Bar";
 import { Tooltip } from "./Tooltip";
-import { TurnBar } from "./TurnBar";
 import "./BarChart.css";
 
+// Each turn (each user prompt) gets its own column at this width. Wide enough
+// that two columns next to each other read as two bars rather than "the chart
+// got cut in half".
+const COLUMN_WIDTH = 110;
+const COLUMN_GAP = 14;
+const LABEL_HEIGHT = 22;
 const STICK_THRESHOLD_PX = 24;
-// Minimum clickable bar height. Without this, a tiny tool_call inside a
-// large stack rounds down to 1px — visible but impossible to hit.
+const TOP_PAD = LABEL_HEIGHT + 8;
+const BOTTOM_PAD = 16;
 const MIN_BAR_HEIGHT = 12;
-// Visual density knob: token count → pixels for a turn-bar.
-const PX_PER_TOKEN = 0.6;
-const MIN_TURN_HEIGHT = 48;
-const MAX_TURN_HEIGHT = 480;
+// Visual density: how tall (in pixels) one token is. Fixed scaling — a 10k
+// system prompt is taller than the viewport on purpose, so it overflows and
+// the user can scroll up to read it at the top of the bar.
+const PX_PER_TOKEN = 0.1;
 
 /**
  * Distribute `targetStackPx` pixels across N sections proportionally to their
  * token counts, while guaranteeing every bar gets at least `minPx`.
- *
- * Strategy: assign proportionally, clamp anything below `minPx` to `minPx`,
- * then redistribute the deficit by shrinking the still-unclamped bars
- * (proportionally to *their* token counts). Repeat until stable. If the stack
- * itself is too short to fit `n × minPx`, grow it — visual fidelity at the
- * low end loses to clickability.
  */
 function distributeBarHeights(
   tokens: number[],
@@ -67,10 +67,6 @@ function distributeBarHeights(
   return heights;
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
 interface SectionStack {
   id: string;
   turnNumber: number;
@@ -79,12 +75,7 @@ interface SectionStack {
 }
 
 interface Props {
-  // Visible sections (post-removal, with edits applied).
   sections: Section[];
-  // Full original section list. Used purely to derive stable turn
-  // boundaries — if we let the visible list drive grouping, deleting a
-  // `user` section would dissolve its boundary and cause neighboring
-  // stacks to silently merge into one.
   allSections: Section[];
   selectedIndices: Set<number>;
   markedForDelete: Set<number>;
@@ -103,14 +94,24 @@ export function BarChart({
   onOpenEditor,
 }: Props) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
-  const stickBottomRef = useRef(true);
+  const stickRightRef = useRef(true);
 
-  // Stable turn assignment — derived from the ORIGINAL (unfiltered) section
-  // list so deleting a section never moves another section's bar. Without
-  // this, removing a `user` section would erase its boundary and the next
-  // turn would silently merge into the previous one's stack.
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setContainerWidth(el.clientWidth);
+    });
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // Stable turn assignment derived from the original (unfiltered) section
+  // list — see prior comments for why deletion-induced merging matters.
   const turnBySectionIndex = useMemo(() => {
     const map: Record<number, number> = {};
     let turn = 0;
@@ -123,9 +124,6 @@ export function BarChart({
         firstUserSeen = true;
         lastTurnedMessageIdx = msgIdx;
       }
-      // 0 = "preamble" (system + tool_def before any user message). It's
-      // folded into turn 1 below so the chart shows N user prompts as N
-      // bars rather than N+1.
       map[s.index] = firstUserSeen ? turn : 0;
     }
     return map;
@@ -144,8 +142,6 @@ export function BarChart({
     if (totalTurns === 0 && hasPreamble) buckets.set(0, []);
     for (let t = 1; t <= totalTurns; t++) buckets.set(t, []);
 
-    // Fold preamble into turn 1 if any real turns exist (system/tool_defs
-    // ride along with the first user prompt's bar).
     const targetForPreamble = totalTurns >= 1 ? 1 : 0;
 
     for (const s of sections) {
@@ -171,63 +167,57 @@ export function BarChart({
     return result;
   }, [allSections, sections, turnBySectionIndex]);
 
-  // Per-turn heights: bar height tracks token count, clamped to a sane range.
-  // Section heights inside the bar use distributeBarHeights so a tiny
-  // tool_call still gets its 12-px click floor.
+  // Per-stack heights. Each stack's pixel height is fixed at its token count
+  // * PX_PER_TOKEN — so a long system prompt produces a tall column that
+  // overflows the viewport vertically.
   const stackLayouts = useMemo(() => {
     return stacks.map((stack) => {
-      const turnPx = clamp(
-        stack.tokenCount * PX_PER_TOKEN,
-        MIN_TURN_HEIGHT,
-        MAX_TURN_HEIGHT,
-      );
+      const targetStackPx = stack.tokenCount * PX_PER_TOKEN;
       const heights = distributeBarHeights(
         stack.sections.map((s) => s.tokenCount),
-        turnPx,
+        targetStackPx,
         MIN_BAR_HEIGHT,
       );
-      return { stack, heights };
+      const total = heights.reduce((sum, h) => sum + h, 0);
+      return { stack, heights, total };
     });
   }, [stacks]);
 
-  // Track whether the user is at the bottom edge so we can decide whether to
-  // auto-scroll on new bars. If they've scrolled up to read history, leave
-  // them there.
+  const maxStackHeight = useMemo(
+    () => stackLayouts.reduce((m, sl) => Math.max(m, sl.total), 0),
+    [stackLayouts],
+  );
+
+  const count = stacks.length;
+  // Each turn = its own fixed-width column with a gap between. Columns DON'T
+  // scale to fill — the user expects "one new bar per user prompt", which only
+  // reads visually if the columns stay the same size as new ones append.
+  const barWidth = COLUMN_WIDTH;
+  const totalColumnsWidth = count > 0 ? count * barWidth + (count - 1) * COLUMN_GAP : 0;
+  const innerWidth = Math.max(containerWidth, totalColumnsWidth + 16);
+  const svgHeight = TOP_PAD + maxStackHeight + BOTTOM_PAD;
+
+  // Track stick state in BOTH axes. Horizontal: pinned to the right so the
+  // newest turn stays in view. Vertical: pinned to the bottom so the newest
+  // section stays in view; scroll up to see system prompt at the top.
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    const distFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
-    stickBottomRef.current = distFromBottom <= STICK_THRESHOLD_PX;
+    const distFromRight = el.scrollWidth - (el.scrollLeft + el.clientWidth);
+    stickRightRef.current = distFromRight <= STICK_THRESHOLD_PX;
   }, []);
 
-  // Pin to bottom on layout commit (before paint) to avoid a one-frame flash
-  // where new content is visible without the scroll catching up.
   const totalSections = sections.length;
-  const lastStackTokenCount =
-    stacks.length > 0 ? stacks[stacks.length - 1].tokenCount : 0;
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    if (stickBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [stacks.length, totalSections]);
-  // Re-pin once after motion's height transition settles. Cheap — only fires
-  // when the latest stack actually grew.
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    if (!stickBottomRef.current) return;
-    const id = window.setTimeout(() => {
-      const cur = scrollerRef.current;
-      if (!cur) return;
-      if (stickBottomRef.current) cur.scrollTop = cur.scrollHeight;
-    }, 220);
-    return () => window.clearTimeout(id);
-  }, [lastStackTokenCount, totalSections]);
+    // Always pin to bottom on update — newest content stays in view.
+    el.scrollTop = el.scrollHeight;
+    if (stickRightRef.current) el.scrollLeft = el.scrollWidth;
+  }, [count, totalSections, maxStackHeight]);
 
-  // Pointer events — bound on each bar but resolved through stable refs to
-  // keep memoized children from re-rendering unnecessarily.
   const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>, index: number) => {
+    (e: React.PointerEvent<SVGGElement>, index: number) => {
       if (e.button !== 0) return;
       onSelect(index, e.shiftKey);
     },
@@ -235,13 +225,13 @@ export function BarChart({
   );
 
   const onPointerEnter = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>, index: number) => {
+    (e: React.PointerEvent<SVGGElement>, index: number) => {
       setHoverIndex(index);
       setHoverPos({ x: e.clientX, y: e.clientY });
     },
     [],
   );
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const onPointerMove = useCallback((e: React.PointerEvent<SVGGElement>) => {
     setHoverPos({ x: e.clientX, y: e.clientY });
   }, []);
   const onPointerLeave = useCallback(() => {
@@ -266,29 +256,67 @@ export function BarChart({
     return turnBySectionIndex[hoverSection.index] ?? 1;
   }, [turnBySectionIndex, hoverSection]);
 
-  const count = stacks.length;
-
   return (
     <div className="bar-chart">
       <div ref={scrollerRef} className="chart-scroll" onScroll={onScroll}>
-        <AnimatePresence initial={false}>
-          {stackLayouts.map(({ stack, heights }) => (
-            <TurnBar
-              key={stack.id}
-              turnNumber={stack.turnNumber}
-              sections={stack.sections}
-              heights={heights}
-              selectedIndices={selectedIndices}
-              markedForDelete={markedForDelete}
-              gemmaFlagsByIndex={gemmaFlagsByIndex}
-              onPointerDown={onPointerDown}
-              onPointerEnter={onPointerEnter}
-              onPointerLeave={onPointerLeave}
-              onPointerMove={onPointerMove}
-              onDoubleClick={onDoubleClick}
-            />
-          ))}
-        </AnimatePresence>
+        <svg
+          width={innerWidth}
+          height={Math.max(svgHeight, 1)}
+          viewBox={`0 0 ${innerWidth} ${Math.max(svgHeight, 1)}`}
+          className="chart-svg"
+        >
+          <AnimatePresence initial={false}>
+            {stackLayouts.map(({ stack, heights }, stackIndex) => {
+              const x = stackIndex * (barWidth + COLUMN_GAP);
+              // Top-anchored columns: cursor starts at TOP_PAD and grows
+              // downward. Sections render in chronological order — system at
+              // top, tool_calls/assistant/tool_output appended below.
+              let cursorY = TOP_PAD;
+              return (
+                <motion.g
+                  key={stack.id}
+                  className="stack-group"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14 }}
+                >
+                  <text
+                    className="column-label"
+                    x={x + barWidth / 2}
+                    y={LABEL_HEIGHT - 6}
+                    textAnchor="middle"
+                  >
+                    {`TURN ${stack.turnNumber}`}
+                  </text>
+                  {stack.sections.map((s, sectionIndex) => {
+                    const heightPx = heights[sectionIndex];
+                    const y = cursorY;
+                    cursorY += heightPx;
+                    return (
+                      <Bar
+                        key={s.index}
+                        section={s}
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        heightPx={heightPx}
+                        isSelected={selectedIndices.has(s.index)}
+                        isMarkedForDelete={markedForDelete.has(s.index)}
+                        gemmaFlag={gemmaFlagsByIndex[s.index]}
+                        onPointerDown={onPointerDown}
+                        onPointerEnter={onPointerEnter}
+                        onPointerLeave={onPointerLeave}
+                        onPointerMove={onPointerMove}
+                        onDoubleClick={onDoubleClick}
+                      />
+                    );
+                  })}
+                </motion.g>
+              );
+            })}
+          </AnimatePresence>
+        </svg>
         {count === 0 && (
           <div className="chart-empty">
             <span>No sections remain in this request.</span>
