@@ -78,9 +78,6 @@ export function useWebSocket(handlers: Handlers) {
       sendRequestFlagging(requestId: string, sectionIndex: number) {
         api.postMessage({ type: "request_flagging", requestId, sectionIndex });
       },
-      sendResetCanonical() {
-        api.postMessage({ type: "reset_canonical" });
-      },
       sendCommitEditsNow(
         requestId: string,
         removedIndices: number[],

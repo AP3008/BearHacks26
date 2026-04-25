@@ -359,7 +359,7 @@ export default function App() {
   // "tool_output") with no preceding `tool_use` assistant message — that's
   // a 400 from Anthropic ("orphan tool_result"), so we must catch it
   // *before* the user commits the delete to canonical, where it would
-  // poison every future request until they hit Reset edits.
+  // poison every future request.
   const canDelete = useCallback(
     (toDelete: Iterable<number>) => {
       const cr = state.currentRequest;
@@ -680,17 +680,6 @@ export default function App() {
         }}
         onSend={onSend}
         onUndo={handleUndo}
-        onResetEdits={() => {
-          // Confirmation here, not in StatusBar, so the StatusBar stays a
-          // dumb presentational component.
-          if (
-            window.confirm(
-              "Clear all saved edits? Future requests will start from Claude Code's full context again. This cannot be undone.",
-            )
-          ) {
-            senders.sendResetCanonical();
-          }
-        }}
       />
     </div>
   );
