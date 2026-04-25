@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -14,7 +13,6 @@ import conversation_state
 import forwarder
 import gating
 import ws_manager
-from gemma import analyzer
 from models import NewRequest, Section
 
 logger = logging.getLogger(__name__)
@@ -164,7 +162,9 @@ async def handle(request: Request) -> Response:
         _held_request = new_request
 
     await ws_manager.send(new_request)
-    asyncio.create_task(analyzer.flag(request_id, sections))
+    # Gemma analysis runs on demand when the user opens a section (see
+    # RequestSuggestion → analyzer.suggest in main.py), not for every section
+    # at request creation.
 
     if must_hold:
         held = gating.register(request_id)
