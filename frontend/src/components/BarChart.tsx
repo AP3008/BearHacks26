@@ -13,11 +13,11 @@ const COLUMN_GAP = 14;
 const LABEL_HEIGHT = 22;
 const STICK_THRESHOLD_PX = 24;
 const TOP_PAD = LABEL_HEIGHT + 8;
-const BOTTOM_PAD = 16;
+const BOTTOM_PAD = 8;
 const MIN_BAR_HEIGHT = 12;
 // Visual density: how tall (in pixels) one token is. Fixed scaling — a 10k
 // system prompt is taller than the viewport on purpose, so it overflows and
-// the user can scroll up to read it at the top of the bar.
+// the user can scroll down to read the rest of the bar.
 const PX_PER_TOKEN = 0.1;
 
 /**
@@ -110,20 +110,24 @@ export function BarChart({
     return () => ro.disconnect();
   }, []);
 
-  // Stable turn assignment derived from the original (unfiltered) section
-  // list — see prior comments for why deletion-induced merging matters.
+  // Each user-written prompt gets its own column. A new turn starts at the
+  // first `user` section after any non-user content — consecutive `user`
+  // sections fold into one turn so a single typed prompt that Claude Code
+  // splits into multiple text blocks (system-reminder + user text) reads as
+  // one bar, not one per block. Derived from the unfiltered section list so
+  // deleting a section never re-merges adjacent turns.
   const turnBySectionIndex = useMemo(() => {
     const map: Record<number, number> = {};
     let turn = 0;
     let firstUserSeen = false;
-    let lastTurnedMessageIdx = -1;
+    let prevWasUser = false;
     for (const s of allSections) {
-      const msgIdx = s.messageIndex ?? -1;
-      if (s.sectionType === "user" && msgIdx !== lastTurnedMessageIdx) {
+      const isUser = s.sectionType === "user";
+      if (isUser && !prevWasUser) {
         turn += 1;
         firstUserSeen = true;
-        lastTurnedMessageIdx = msgIdx;
       }
+      prevWasUser = isUser;
       map[s.index] = firstUserSeen ? turn : 0;
     }
     return map;
@@ -197,9 +201,10 @@ export function BarChart({
   const innerWidth = Math.max(containerWidth, totalColumnsWidth + 16);
   const svgHeight = TOP_PAD + maxStackHeight + BOTTOM_PAD;
 
-  // Track stick state in BOTH axes. Horizontal: pinned to the right so the
-  // newest turn stays in view. Vertical: pinned to the bottom so the newest
-  // section stays in view; scroll up to see system prompt at the top.
+  // Track stick state for horizontal scroll only — pinned to the right so the
+  // newest turn stays in view as new columns append. Vertical scroll resets to
+  // the top on every update so the user always lands on the new turn's label
+  // and the top of the latest bar.
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -211,8 +216,9 @@ export function BarChart({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    // Always pin to bottom on update — newest content stays in view.
-    el.scrollTop = el.scrollHeight;
+    // Always pin to top on update — TURN labels and the newest turn's bar stay
+    // in view; tall columns extend downward and are reached by scrolling down.
+    el.scrollTop = 0;
     if (stickRightRef.current) el.scrollLeft = el.scrollWidth;
   }, [count, totalSections, maxStackHeight]);
 
@@ -268,9 +274,10 @@ export function BarChart({
           <AnimatePresence initial={false}>
             {stackLayouts.map(({ stack, heights }, stackIndex) => {
               const x = stackIndex * (barWidth + COLUMN_GAP);
-              // Top-anchored columns: cursor starts at TOP_PAD and grows
-              // downward. Sections render in chronological order — system at
-              // top, tool_calls/assistant/tool_output appended below.
+              // Top-anchored columns: every column hangs from the same top
+              // line just under the TURN label, so a short new turn shows up
+              // right at the top of the viewport (where auto-scroll lands)
+              // and tall columns extend downward off-screen.
               let cursorY = TOP_PAD;
               return (
                 <motion.g

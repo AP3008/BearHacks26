@@ -51,6 +51,11 @@ def _client_or_raise() -> httpx.AsyncClient:
 
 async def forward_messages(body: dict[str, Any], headers: dict[str, str]) -> Response:
     url = f"{_upstream}/v1/messages"
+    # Defensive net: even on paths that didn't go through apply_edits (aux
+    # calls, canonical/incoming drift across sessions) we must not ship a
+    # tool_result whose tool_use_id has no match in the prior assistant turn —
+    # Anthropic rejects the request with HTTP 400 and the conversation aborts.
+    body = gating.prune_orphan_tool_pairs(body)
     payload = json.dumps(body).encode("utf-8")
     fwd_headers = _filter_request_headers(headers)
     fwd_headers["content-type"] = "application/json"

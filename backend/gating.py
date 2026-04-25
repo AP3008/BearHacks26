@@ -140,6 +140,140 @@ def _apply_block_edit(block: Any, new_text: str) -> Any:
     return block
 
 
+def prune_orphan_tool_pairs(body: dict[str, Any]) -> dict[str, Any]:
+    """Strip dangling tool_use / tool_result blocks so the forwarded body
+    satisfies Anthropic's pairing rule: every tool_result must reference a
+    tool_use in the immediately-prior assistant message, and every tool_use
+    must be answered by a tool_result in the following user message.
+
+    Triggers we guard against:
+      * apply_edits removed a tool_use block (orphan tool_result downstream).
+      * apply_edits dropped a whole assistant message because all its blocks
+        were removed (every downstream tool_result for those uses orphaned).
+      * apply_edits removed a tool_result (orphan tool_use upstream).
+      * Canonical / incoming drift across sessions where length stayed the
+        same but tool ids changed.
+
+    Pruning a tool_use can in turn orphan the user's tool_result, and vice
+    versa, and dropping an empty message can shift adjacency — so we iterate
+    until stable (bounded; real cascades are 1-2 deep).
+    """
+    body = copy.deepcopy(body)
+
+    pruned_uses_total = 0
+    pruned_results_total = 0
+    dropped_msgs_total = 0
+
+    for _ in range(5):
+        msgs = body.get("messages")
+        if not isinstance(msgs, list) or not msgs:
+            break
+
+        use_ids_per_msg: list[set[str]] = []
+        result_ids_per_msg: list[set[str]] = []
+        for msg in msgs:
+            uses: set[str] = set()
+            results: set[str] = set()
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        btype = block.get("type")
+                        if btype == "tool_use" and isinstance(block.get("id"), str):
+                            uses.add(block["id"])
+                        elif btype == "tool_result" and isinstance(
+                            block.get("tool_use_id"), str
+                        ):
+                            results.add(block["tool_use_id"])
+            use_ids_per_msg.append(uses)
+            result_ids_per_msg.append(results)
+
+        pruned_uses = 0
+        pruned_results = 0
+        new_msgs: list[Any] = []
+        for i, msg in enumerate(msgs):
+            if not isinstance(msg, dict):
+                new_msgs.append(msg)
+                continue
+            role = msg.get("role")
+            content = msg.get("content")
+            if not isinstance(content, list):
+                new_msgs.append(msg)
+                continue
+
+            if role == "assistant":
+                next_results: set[str] = set()
+                if i + 1 < len(msgs):
+                    nxt = msgs[i + 1]
+                    if isinstance(nxt, dict) and nxt.get("role") == "user":
+                        next_results = result_ids_per_msg[i + 1]
+                kept: list[Any] = []
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_use"
+                        and block.get("id") not in next_results
+                    ):
+                        pruned_uses += 1
+                        continue
+                    kept.append(block)
+                msg = {**msg, "content": kept}
+            elif role == "user":
+                prior_uses: set[str] = set()
+                if i > 0:
+                    prior = msgs[i - 1]
+                    if isinstance(prior, dict) and prior.get("role") == "assistant":
+                        prior_uses = use_ids_per_msg[i - 1]
+                kept = []
+                for block in content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_result"
+                        and block.get("tool_use_id") not in prior_uses
+                    ):
+                        pruned_results += 1
+                        continue
+                    kept.append(block)
+                msg = {**msg, "content": kept}
+
+            new_msgs.append(msg)
+
+        # Anthropic rejects messages with empty content lists, mirroring the
+        # explicit drop in apply_edits when every block was removed.
+        cleaned: list[Any] = []
+        dropped = 0
+        for msg in new_msgs:
+            if (
+                isinstance(msg, dict)
+                and isinstance(msg.get("content"), list)
+                and len(msg["content"]) == 0
+            ):
+                dropped += 1
+                continue
+            cleaned.append(msg)
+
+        body["messages"] = cleaned
+        pruned_uses_total += pruned_uses
+        pruned_results_total += pruned_results
+        dropped_msgs_total += dropped
+
+        if pruned_uses == 0 and pruned_results == 0 and dropped == 0:
+            break
+
+    if pruned_uses_total or pruned_results_total or dropped_msgs_total:
+        logger.warning(
+            "gating: pruned orphan tool blocks (tool_use=%d, tool_result=%d, "
+            "dropped_empty_msgs=%d)",
+            pruned_uses_total,
+            pruned_results_total,
+            dropped_msgs_total,
+        )
+
+    return body
+
+
 def apply_edits(
     body: dict[str, Any],
     removed_indices: list[int],
@@ -225,4 +359,8 @@ def apply_edits(
             next_index += 1
 
     body["messages"] = new_messages
-    return body
+    # Pair-prune AFTER structural edits — removing a tool_use block (or
+    # dropping a whole assistant message) leaves the matching tool_result
+    # downstream as an orphan, which Anthropic rejects with
+    # `unexpected tool_use_id found in tool_result blocks`.
+    return prune_orphan_tool_pairs(body)
