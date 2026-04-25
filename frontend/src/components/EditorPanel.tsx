@@ -30,8 +30,16 @@ const TYPE_LABEL: Record<string, string> = {
   assistant: "Assistant response",
   tool_call: "Tool call",
   tool_output: "Tool output",
+  image: "Image content",
   unknown: "Unknown section",
 };
+
+// Section types whose Monaco view is structural (Anthropic schema-bound),
+// not free-form text. Edits to these don't round-trip back into the upstream
+// body — see backend gating._apply_block_edit. The user can still delete
+// the section to skip it. Without this, a user editing the rendered text of
+// e.g. a tool_use block would silently see their changes dropped.
+const STRUCTURED_TYPES = new Set(["tool_def", "tool_call", "image"]);
 
 function languageFor(section: Section): string {
   // Tool calls are structured JSON. Tool outputs can be logs, source code, or
@@ -289,12 +297,12 @@ export function EditorPanel({
           </span>
         </div>
         <div className="editor-head-right">
-          {section.sectionType === "tool_def" && (
+          {STRUCTURED_TYPES.has(section.sectionType) && (
             <span
               className="muted"
-              title="Tool definitions are structured objects; free-form text edits can't round-trip back into Anthropic's tools[] schema. You can still delete the tool to skip it for this request."
+              title="This section is a structured Anthropic block (tool definition, tool call, or image). Free-form text edits can't round-trip back into its schema, so the editor is read-only. Delete the section to skip it for this request."
             >
-              read-only · delete to skip
+              structured · delete to skip
             </span>
           )}
           <button
@@ -349,7 +357,7 @@ export function EditorPanel({
                   horizontalScrollbarSize: 10,
                 },
                 lineHeight: 19,
-                readOnly: section.sectionType === "tool_def",
+                readOnly: STRUCTURED_TYPES.has(section.sectionType),
               }}
             />
           </div>

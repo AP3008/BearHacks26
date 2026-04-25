@@ -7,6 +7,10 @@ interface Props {
   mode: Mode;
   paused: boolean;
   held: boolean;
+  // Number of additional requests waiting behind the current one. Renders as
+  // a "+N held" badge so the user knows acting on the visible request will
+  // not unblock the proxy entirely. 0 = no badge.
+  queueLength: number;
   totalTokens: number;
   totalCost: number;
   hasEdits: boolean;
@@ -36,6 +40,7 @@ export function StatusBar({
   mode,
   paused,
   held,
+  queueLength,
   totalTokens,
   totalCost,
   hasEdits,
@@ -170,8 +175,22 @@ export function StatusBar({
           </button>
 
           <AnimatePresence>
+            {queueLength > 0 && (
+              <motion.span
+                key="queue-badge"
+                className="queue-badge"
+                title={`${queueLength} more request${queueLength === 1 ? "" : "s"} held in queue. Send the current one to advance.`}
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.85 }}
+                transition={{ type: "spring", stiffness: 320, damping: 24 }}
+              >
+                +{queueLength} held
+              </motion.span>
+            )}
             {held && (
               <motion.button
+                key="send-btn"
                 type="button"
                 className="btn primary send"
                 onClick={onSend}

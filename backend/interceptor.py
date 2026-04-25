@@ -24,14 +24,17 @@ _HISTORY_LIMIT = 20
 recent_sections: dict[str, list[Section]] = {}
 _recent_order: list[str] = []
 
-# Snapshot inputs — `_held_request` is the request currently waiting on user
-# approval (at most one in normal use, since Claude Code is single-flight).
+# Snapshot inputs — `_held_requests` is the FIFO list of requests currently
+# waiting on user approval. Claude Code is normally single-flight so this is
+# usually 0-1 items, but two terminals pointing at the same proxy in
+# ask_permission mode can put multiple holds in flight simultaneously, and
+# without surfacing the full list the panel can only act on the first.
 # `_latest_request` is the last new_request we sent so a freshly-attached
 # panel still has *something* to render even when nothing is held.
 # `_history` is a rolling buffer so the panel can show a request picker —
 # without it, Claude Code's auxiliary calls (title generation, summary, etc.)
 # silently overwrite the user's actual prompt within milliseconds.
-_held_request: Optional[NewRequest] = None
+_held_requests: list[NewRequest] = []
 _latest_request: Optional[NewRequest] = None
 _history: list[NewRequest] = []
 
@@ -75,7 +78,15 @@ def _remember(request_id: str, sections: list[Section]) -> None:
 
 
 def held_request() -> Optional[NewRequest]:
-    return _held_request
+    """Back-compat: return the oldest held request (= the one the user should
+    act on first). Newer panels read `held_requests()` for the full queue."""
+    return _held_requests[0] if _held_requests else None
+
+
+def held_requests() -> list[NewRequest]:
+    """All requests currently held for approval, oldest first. Snapshot
+    consumers iterate this so a reconnecting panel can rebuild its queue."""
+    return list(_held_requests)
 
 
 def latest_request() -> Optional[NewRequest]:
@@ -141,7 +152,7 @@ def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tu
 
 
 async def handle(request: Request) -> Response:
-    global _held_request, _latest_request
+    global _latest_request
 
     raw = await request.body()
     headers = dict(request.headers)
@@ -149,12 +160,20 @@ async def handle(request: Request) -> Response:
 
     try:
         body: dict[str, Any] = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        logger.info("interceptor: non-json body, forwarding raw")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning(
+            "interceptor: non-json body (%s, len=%d) — gate bypassed, forwarding raw",
+            type(exc).__name__,
+            len(raw),
+        )
         return await _forward_raw(raw, headers)
 
     if not isinstance(body, dict) or "messages" not in body:
-        logger.info("interceptor: missing messages array, forwarding raw")
+        keys = list(body.keys()) if isinstance(body, dict) else []
+        logger.warning(
+            "interceptor: body missing 'messages' (top-level keys=%s) — gate bypassed, forwarding raw",
+            keys,
+        )
         return await _forward_raw(raw, headers)
 
     # Aux calls (title gen, topic detection, summarization) ship no `tools`
@@ -223,7 +242,7 @@ async def handle(request: Request) -> Response:
     _latest_request = new_request
     _push_history(new_request)
     if must_hold:
-        _held_request = new_request
+        _held_requests.append(new_request)
 
     await ws_manager.send(new_request)
     # Gemma flagging runs on demand when requested by the UI (see
@@ -250,8 +269,12 @@ async def handle(request: Request) -> Response:
                 )
         finally:
             gating.release(request_id)
-            if _held_request is not None and _held_request.requestId == request_id:
-                _held_request = None
+            # Drop this request from the held queue regardless of position —
+            # decision (approve/cancel/modified) has been made or we errored.
+            for i, req in enumerate(_held_requests):
+                if req.requestId == request_id:
+                    _held_requests.pop(i)
+                    break
 
     return await forwarder.forward_messages(body, headers)
 

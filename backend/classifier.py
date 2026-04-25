@@ -32,55 +32,46 @@ def _system_text(system: Any) -> str:
     return _coerce_text(system)
 
 
-def _classify_message(role: str, content: Any) -> tuple[SectionType, str]:
-    if isinstance(content, str):
+def _classify_block(role: str, block: Any) -> tuple[SectionType, str]:
+    """Classify a single message content block. Block-level granularity (vs.
+    one-section-per-message) so a user message with `[text, tool_result]`
+    becomes two editable sections instead of one collapsed string — and so
+    apply_edits can update the right block without inventing structure that
+    didn't exist."""
+    if not isinstance(block, dict):
+        # String content (when the entire message.content is a plain string)
+        # or anything else we can flatten to text.
+        text = _coerce_text(block)
         if role == "system":
-            return "system", content
+            return "system", text
         if role == "assistant":
-            return "assistant", content
-        return "user", content
+            return "assistant", text
+        return "user", text
 
-    if not isinstance(content, list):
-        return "unknown", _coerce_text(content)
-
-    has_tool_use = False
-    has_tool_result = False
-    text_parts: list[str] = []
-    tool_parts: list[str] = []
-
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        btype = block.get("type")
-        if btype == "text" and isinstance(block.get("text"), str):
-            text_parts.append(block["text"])
-        elif btype == "tool_use":
-            has_tool_use = True
-            name = block.get("name", "")
-            tool_input = block.get("input", {})
-            try:
-                rendered = json.dumps(tool_input, ensure_ascii=False)
-            except (TypeError, ValueError):
-                rendered = str(tool_input)
-            tool_parts.append(f"[tool_use {name}] {rendered}")
-        elif btype == "tool_result":
-            has_tool_result = True
-            inner = block.get("content")
-            tool_parts.append(f"[tool_result] {_coerce_text(inner)}")
-
-    raw = "\n".join(p for p in text_parts + tool_parts if p)
-
-    if role == "user" and has_tool_result:
-        return "tool_output", raw
-    if role == "assistant" and has_tool_use:
-        return "tool_call", raw
-    if role == "user":
-        return "user", raw
-    if role == "assistant":
-        return "assistant", raw
-    if role == "system":
-        return "system", raw
-    return "unknown", raw
+    btype = block.get("type")
+    if btype == "text" and isinstance(block.get("text"), str):
+        text = block["text"]
+        if role == "assistant":
+            return "assistant", text
+        if role == "system":
+            return "system", text
+        return "user", text
+    if btype == "tool_use":
+        name = block.get("name", "")
+        tool_input = block.get("input", {})
+        try:
+            rendered = json.dumps(tool_input, ensure_ascii=False)
+        except (TypeError, ValueError):
+            rendered = str(tool_input)
+        return "tool_call", f"[tool_use {name}] {rendered}"
+    if btype == "tool_result":
+        return "tool_output", _coerce_text(block.get("content"))
+    if btype == "image":
+        # Anthropic image blocks: source is base64 or URL. We deliberately
+        # don't render the bytes — just a sentinel so the user can see and
+        # delete it. Edits don't round-trip into the structured source.
+        return "image", "[image content]"
+    return "unknown", _coerce_text(block)
 
 
 def _preview(text: str) -> str:
@@ -136,9 +127,12 @@ def classify(body: dict) -> tuple[list[Section], int, float, str]:
     tools = body.get("tools", []) if isinstance(body, dict) else []
     if isinstance(tools, list):
         for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            label, raw = _tool_def_text(tool)
+            # Walk every slot (even non-dicts) so apply_edits stays in
+            # lockstep — its walk does not skip non-dicts either.
+            if isinstance(tool, dict):
+                label, raw = _tool_def_text(tool)
+            else:
+                label, raw = "tool", _coerce_text(tool)
             tokens = tokenizer.count(raw)
             sections.append(
                 Section(
@@ -156,24 +150,66 @@ def classify(body: dict) -> tuple[list[Section], int, float, str]:
     if not isinstance(messages, list):
         messages = []
 
-    for entry in messages:
+    for msg_idx, entry in enumerate(messages):
+        # Per-block emission: a user message with [text, tool_result, tool_result]
+        # becomes three sections (one editable text, two editable tool outputs).
+        # Without this, structural fidelity is lost when the user edits — see
+        # the broken tool_call edit case where a text block was silently
+        # prepended to an assistant tool_use message.
         if not isinstance(entry, dict):
+            # Non-dict at message position — emit a single placeholder so
+            # apply_edits' walk stays aligned with this index.
+            raw = _coerce_text(entry)
+            tokens = tokenizer.count(raw)
+            sections.append(
+                Section(
+                    index=next_index,
+                    sectionType="unknown",
+                    tokenCount=tokens,
+                    cost=pricing.section_cost(tokens, model),
+                    contentPreview=_preview(raw),
+                    rawContent=raw,
+                    messageIndex=msg_idx,
+                )
+            )
+            next_index += 1
             continue
+
         role = entry.get("role", "")
         content = entry.get("content")
-        section_type, raw = _classify_message(role, content)
-        tokens = tokenizer.count(raw)
-        sections.append(
-            Section(
-                index=next_index,
-                sectionType=section_type,
-                tokenCount=tokens,
-                cost=pricing.section_cost(tokens, model),
-                contentPreview=_preview(raw),
-                rawContent=raw,
+
+        if isinstance(content, list):
+            for block in content:
+                section_type, raw = _classify_block(role, block)
+                tokens = tokenizer.count(raw)
+                sections.append(
+                    Section(
+                        index=next_index,
+                        sectionType=section_type,
+                        tokenCount=tokens,
+                        cost=pricing.section_cost(tokens, model),
+                        contentPreview=_preview(raw),
+                        rawContent=raw,
+                        messageIndex=msg_idx,
+                    )
+                )
+                next_index += 1
+        else:
+            # String content (or None) — one section for the whole message.
+            section_type, raw = _classify_block(role, content)
+            tokens = tokenizer.count(raw)
+            sections.append(
+                Section(
+                    index=next_index,
+                    sectionType=section_type,
+                    tokenCount=tokens,
+                    cost=pricing.section_cost(tokens, model),
+                    contentPreview=_preview(raw),
+                    rawContent=raw,
+                    messageIndex=msg_idx,
+                )
             )
-        )
-        next_index += 1
+            next_index += 1
 
     total_tokens = sum(s.tokenCount for s in sections)
     total_cost = sum(s.cost for s in sections)
