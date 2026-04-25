@@ -234,6 +234,92 @@
   text-overflow: ellipsis;
 }
 
+.gemma-suggest-block {
+  margin-top: 10px;
+}
+
+.gemma-suggest-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cl-muted);
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+
+.gemma-suggest-code {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11.5px;
+  line-height: 1.35;
+  padding: 8px 8px;
+  border: 1px solid var(--cl-border);
+  background: rgba(17, 16, 15, 0.75);
+  border-radius: 1px;
+  color: var(--cl-text);
+}
+
+.gemma-suggest-replace {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 7px 8px;
+  border: 1px solid var(--cl-border);
+  background: rgba(17, 16, 15, 0.75);
+  border-radius: 1px;
+  color: var(--cl-text);
+  outline: none;
+}
+
+.gemma-suggest-replace:focus {
+  border-color: var(--cl-border-strong);
+  box-shadow: 0 0 0 2px rgba(242, 140, 69, 0.12);
+}
+
+.gemma-suggest-reasoning {
+  margin-top: 10px;
+  border: 1px solid var(--cl-border);
+  background: rgba(17, 16, 15, 0.55);
+  border-radius: 1px;
+  padding: 6px 8px;
+}
+
+.gemma-suggest-reasoning > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--cl-text);
+  opacity: 0.9;
+  user-select: none;
+}
+
+.gemma-suggest-reasoning > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gemma-suggest-reasoning > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 14px;
+  color: var(--cl-muted);
+}
+
+.gemma-suggest-reasoning[open] > summary::before {
+  content: "▾";
+}
+
+.gemma-suggest-reasoning-body {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--cl-muted);
+  white-space: pre-wrap;
+}
+
 .gemma-suggest-actions {
   margin-top: 8px;
   display: flex;

@@ -1,7 +1,7 @@
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
 import { motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GemmaFlag, GemmaSuggestion, Section } from "../types";
 import "./EditorPanel.css";
 
@@ -35,6 +35,7 @@ interface SidebarSuggestion {
   end: number;
   reason: string;
   snippet: string;
+  highlightedText: string;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -263,8 +264,29 @@ export function EditorPanel({
       end: h.end,
       reason: h.reason || "Gemma suggests removing this.",
       snippet: makeSnippet(content, h.start, h.end),
+      highlightedText: content.slice(
+        Math.max(0, Math.min(h.start, content.length)),
+        Math.max(0, Math.min(h.end, content.length)),
+      ),
     }));
   }, [suggestion, content]);
+
+  const [replacementById, setReplacementById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (sidebarSuggestions.length === 0) return;
+    setReplacementById((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of sidebarSuggestions) {
+        if (next[s.id] == null) {
+          next[s.id] = "";
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sidebarSuggestions]);
 
   const handleJumpToSuggestion = useCallback((s: SidebarSuggestion) => {
     const editor = editorRef.current;
@@ -297,6 +319,7 @@ export function EditorPanel({
     const end = Math.max(start, Math.min(s.end, model.getValueLength()));
     const startPos = model.getPositionAt(start);
     const endPos = model.getPositionAt(end);
+    const replacement = replacementById[s.id] ?? "";
     editor.executeEdits("gemma-accept", [
       {
         range: new monaco.Range(
@@ -305,12 +328,12 @@ export function EditorPanel({
           endPos.lineNumber,
           endPos.column,
         ),
-        text: "",
+        text: replacement,
         forceMoveMarkers: true,
       },
     ]);
     editor.focus();
-  }, []);
+  }, [replacementById]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -463,13 +486,41 @@ export function EditorPanel({
                       <span className="gemma-suggest-index">{idx + 1}</span>
                       <span className="gemma-suggest-reason">{s.reason}</span>
                     </button>
+                    <div className="gemma-suggest-block">
+                      <div className="gemma-suggest-label">Text highlighted</div>
+                      <pre className="gemma-suggest-code">
+                        {s.highlightedText || "(empty)"}
+                      </pre>
+                    </div>
+
+                    <div className="gemma-suggest-block">
+                      <div className="gemma-suggest-label">Replaced text</div>
+                      <textarea
+                        className="gemma-suggest-replace"
+                        value={replacementById[s.id] ?? ""}
+                        onChange={(e) =>
+                          setReplacementById((prev) => ({
+                            ...prev,
+                            [s.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Leave empty to delete this highlighted range"
+                        rows={2}
+                      />
+                    </div>
+
+                    <details className="gemma-suggest-reasoning">
+                      <summary>Reasoning</summary>
+                      <div className="gemma-suggest-reasoning-body">{s.reason}</div>
+                    </details>
+
                     <div className="gemma-suggest-snippet">{s.snippet}</div>
                     <div className="gemma-suggest-actions">
                       <button
                         type="button"
                         className="btn gemma-suggest-btn"
                         onClick={() => handleAcceptSuggestion(s)}
-                        title="Remove this range"
+                        title="Apply replacement"
                       >
                         Accept
                       </button>
