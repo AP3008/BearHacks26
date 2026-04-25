@@ -83,32 +83,29 @@ async def _chat_flagging(
     formatted = prompts.format_gemma4_dialogue(system=system, user=user)
     try:
         async with httpx.AsyncClient(timeout=_chat_timeout_s) as client:
-            resp = await asyncio.wait_for(
-                client.post(
-                    f"{_host}/api/chat",
-                    json={
-                        "model": _model,
-                        # Parser is already tolerant of minor JSON wrapping and
-                        # the system prompt defines the shape; avoid strict
-                        # schema enforcement unless we need it.
-                        "format": "json",
-                        "options": {
-                            "temperature": 0,
-                            # Allow enough room for large highlight arrays.
-                            "num_predict": 2048,
-                        },
-                        "keep_alive": "10m",
-                        "messages": [
-                            # Use a single user message containing the full
-                            # Gemma 4 formatted dialogue. This prevents any
-                            # ambiguity in how system vs user text are
-                            # separated by the serving layer.
-                            {"role": "user", "content": formatted},
-                        ],
-                        "stream": False,
+            resp = await client.post(
+                f"{_host}/api/chat",
+                json={
+                    "model": _model,
+                    # Parser is already tolerant of minor JSON wrapping and
+                    # the system prompt defines the shape; avoid strict
+                    # schema enforcement unless we need it.
+                    "format": "json",
+                    "options": {
+                        "temperature": 0,
+                        # Allow enough room for large highlight arrays.
+                        "num_predict": 2048,
                     },
-                ),
-                timeout=_chat_timeout_s,
+                    "keep_alive": "10m",
+                    "messages": [
+                        # Use a single user message containing the full
+                        # Gemma 4 formatted dialogue. This prevents any
+                        # ambiguity in how system vs user text are
+                        # separated by the serving layer.
+                        {"role": "user", "content": formatted},
+                    ],
+                    "stream": False,
+                },
             )
         if resp.status_code != 200:
             logger.warning(
@@ -120,7 +117,7 @@ async def _chat_flagging(
             )
             return None
         resp = resp.json()
-    except asyncio.TimeoutError:
+    except httpx.TimeoutException:
         logger.warning("gemma: chat call timed out (model=%s host=%s)", _model, _host)
         raise
     except Exception as exc:
