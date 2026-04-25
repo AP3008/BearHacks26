@@ -117,47 +117,27 @@ def release(request_id: str) -> None:
     in_flight.pop(request_id, None)
 
 
-def _replace_text_in_content(content: Any, new_text: str) -> Any:
-    if isinstance(content, str):
-        return new_text
-    if not isinstance(content, list):
-        return new_text
+def _apply_block_edit(block: Any, new_text: str) -> Any:
+    """Apply a text edit to a single content block, preserving block type.
 
-    has_tool_result = any(
-        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-    )
-
-    rebuilt = []
-    replaced = False
-    for block in content:
-        if not isinstance(block, dict):
-            rebuilt.append(block)
-            continue
-        btype = block.get("type")
-        if has_tool_result and btype == "tool_result":
-            # The user's edit is the new tool_result content. Preserve the
-            # tool_use_id so Anthropic can match it; only the first tool_result
-            # absorbs the edit, the rest are dropped (a single section maps to
-            # a single user-visible blob of tool output).
-            if not replaced:
-                rebuilt.append({**block, "content": new_text})
-                replaced = True
-            continue
-        if has_tool_result and btype == "text":
-            # Drop sibling text blocks — the edit fully replaces the section.
-            continue
-        if not has_tool_result and btype == "text":
-            if not replaced:
-                rebuilt.append({**block, "text": new_text})
-                replaced = True
-            else:
-                continue
-        else:
-            # tool_use, image, or any other block type — preserve unchanged.
-            rebuilt.append(block)
-    if not replaced:
-        rebuilt.insert(0, {"type": "text", "text": new_text})
-    return rebuilt
+    For `text` and `tool_result` blocks the user's edit lands in the right
+    field (`text` / `content`) so Anthropic still gets a structurally-correct
+    block. For structured blocks (`tool_use`, `image`, unknown) we drop the
+    edit and return the block unchanged — free-form text doesn't round-trip
+    into a tool's `input` JSON or an image's `source`. The frontend marks
+    these section types as read-only so the user is told upfront.
+    """
+    if not isinstance(block, dict):
+        # String-content message: the whole content is just text.
+        return new_text
+    btype = block.get("type")
+    if btype == "text":
+        return {**block, "text": new_text}
+    if btype == "tool_result":
+        return {**block, "content": new_text}
+    # tool_use, image, or unknown — edits don't round-trip into structured
+    # fields. Preserve original; user must delete the section to skip.
+    return block
 
 
 def apply_edits(
@@ -166,9 +146,10 @@ def apply_edits(
     edited_sections: list[EditedSection],
 ) -> dict[str, Any]:
     """Apply UI edits to the upstream body in lockstep with classifier order:
-    system (if any) → tool_defs → messages. Each Section the user could see
-    in the chart corresponds to exactly one slot in this walk; we increment
-    `next_index` after every slot, regardless of whether it's removed.
+    system (if any) → tool_defs → messages → blocks-within-each-message. Each
+    Section the user saw in the chart corresponds to exactly one slot in this
+    walk; we increment `next_index` after every slot, regardless of whether
+    it's removed.
 
     Tool-def edits are intentionally ignored — Anthropic's `tools` entries are
     structured objects with name/description/input_schema, and free-form text
@@ -205,16 +186,43 @@ def apply_edits(
     messages = body.get("messages", [])
     new_messages: list[Any] = []
     for entry in messages:
-        if next_index in removed:
+        if not isinstance(entry, dict):
+            # Non-dict slot: classifier emitted one Section for it. Honor its
+            # remove/edit decision but pass through unchanged otherwise.
+            if next_index in removed:
+                next_index += 1
+                continue
+            if next_index in edits:
+                entry = edits[next_index]
+            new_messages.append(entry)
             next_index += 1
             continue
-        if next_index in edits and isinstance(entry, dict):
-            entry = {
-                **entry,
-                "content": _replace_text_in_content(entry.get("content"), edits[next_index]),
-            }
-        new_messages.append(entry)
-        next_index += 1
+
+        content = entry.get("content")
+        if isinstance(content, list):
+            new_blocks: list[Any] = []
+            for block in content:
+                if next_index in removed:
+                    next_index += 1
+                    continue
+                if next_index in edits:
+                    block = _apply_block_edit(block, edits[next_index])
+                new_blocks.append(block)
+                next_index += 1
+            if not new_blocks:
+                # All blocks removed — drop the whole message rather than
+                # forwarding an empty content list (Anthropic rejects those).
+                continue
+            new_messages.append({**entry, "content": new_blocks})
+        else:
+            # String / scalar content — one section for the whole message.
+            if next_index in removed:
+                next_index += 1
+                continue
+            if next_index in edits:
+                entry = {**entry, "content": edits[next_index]}
+            new_messages.append(entry)
+            next_index += 1
 
     body["messages"] = new_messages
     return body

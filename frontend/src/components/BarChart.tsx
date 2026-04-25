@@ -123,14 +123,24 @@ export function BarChart({
   // list so deleting a section never moves another section's bar. Without
   // this, removing a `user` section would erase its boundary and the next
   // turn would silently merge into the previous one's stack.
+  //
+  // Per-block sections (one section per content block) mean a user message
+  // with [text, tool_result] now produces two `user`/`tool_output` sections.
+  // We dedupe via messageIndex so each parent message contributes at most
+  // ONE turn boundary — without this, multi-block user messages would split
+  // into multiple turns and the chart would lie about how many prompts the
+  // conversation has.
   const turnBySectionIndex = useMemo(() => {
     const map: Record<number, number> = {};
     let turn = 0;
     let firstUserSeen = false;
+    let lastTurnedMessageIdx = -1;
     for (const s of allSections) {
-      if (s.sectionType === "user") {
+      const msgIdx = s.messageIndex ?? -1;
+      if (s.sectionType === "user" && msgIdx !== lastTurnedMessageIdx) {
         turn += 1;
         firstUserSeen = true;
+        lastTurnedMessageIdx = msgIdx;
       }
       // 0 = "preamble" (system + tool_def before any user message). It's
       // folded into turn 1 below so the chart shows N user prompts as N
