@@ -208,6 +208,14 @@ async def flag_for_section(request_id: str, section: Section) -> None:
         await _wait_for_idle()
         user = prompts.flagging_user([section])
         raw = await _chat(prompts.FLAGGING_SYSTEM, user)
+        if raw is not None:
+            preview = raw.strip().replace("\n", "\\n")
+            logger.info(
+                "gemma: flagging raw request_id=%s index=%s raw=%s",
+                request_id,
+                section.index,
+                preview[:2000],
+            )
         if raw is None:
             await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
             return

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 from typing import Any
@@ -101,9 +102,14 @@ def parse_flags(raw: str, *, default_section_index: int | None = None) -> list[G
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
-        preview = payload.strip().replace("\n", "\\n")[:400]
-        logger.warning("gemma: malformed flagging JSON payload=%s", preview)
-        return []
+        # Fallback for "almost JSON" outputs (single quotes, trailing commas).
+        # This keeps the flagging pipeline resilient without changing the model prompt.
+        try:
+            data = ast.literal_eval(payload)
+        except Exception:
+            preview = payload.strip().replace("\n", "\\n")[:400]
+            logger.warning("gemma: malformed flagging JSON payload=%s", preview)
+            return []
 
     if isinstance(data, dict) and isinstance(data.get("flags"), list):
         entries = data["flags"]
