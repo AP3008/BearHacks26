@@ -3,6 +3,7 @@
 
 export type SectionType =
   | "system"
+  | "tool_def"
   | "user"
   | "assistant"
   | "tool_call"
@@ -18,6 +19,8 @@ export interface Section {
   rawContent: string;
 }
 
+export type RequestKind = "top_level" | "tool_chain";
+
 export interface NewRequest {
   type: "new_request";
   requestId: string;
@@ -26,6 +29,9 @@ export interface NewRequest {
   totalCost: number;
   model: string;
   held?: boolean;
+  kind?: RequestKind;
+  lastUserPreview?: string;
+  createdAt?: number;
 }
 
 export interface GemmaFlag {
@@ -41,11 +47,47 @@ export interface GemmaFlags {
   flags: GemmaFlag[];
 }
 
+export interface SuggestionHighlight {
+  start: number;
+  end: number;
+  reason: string;
+}
+
+export interface GemmaSuggestion {
+  type: "gemma_suggestion";
+  requestId: string;
+  sectionIndex: number;
+  highlights: SuggestionHighlight[];
+}
+
 export interface GemmaUnavailable {
   type: "gemma_unavailable";
 }
 
-export type InboundMessage = NewRequest | GemmaFlags | GemmaUnavailable;
+export type Mode = "auto_send" | "ask_permission";
+
+export interface Snapshot {
+  type: "snapshot";
+  mode: Mode;
+  paused: boolean;
+  gemmaAvailable: boolean;
+  pendingRequest: NewRequest | null;
+  latestRequest: NewRequest | null;
+  recentRequests?: NewRequest[];
+}
+
+export interface TimeoutWarning {
+  type: "timeout_warning";
+  requestId: string;
+}
+
+export type InboundMessage =
+  | NewRequest
+  | GemmaFlags
+  | GemmaSuggestion
+  | GemmaUnavailable
+  | Snapshot
+  | TimeoutWarning;
 
 export interface ApproveRequest {
   type: "approve";
@@ -64,8 +106,6 @@ export interface ModifiedRequest {
   editedSections: EditedSection[];
 }
 
-export type Mode = "auto_send" | "ask_permission";
-
 export interface ModeChange {
   type: "mode_change";
   mode: Mode;
@@ -76,11 +116,18 @@ export interface PauseToggle {
   paused: boolean;
 }
 
+export interface RequestSuggestion {
+  type: "request_suggestion";
+  requestId: string;
+  sectionIndex: number;
+}
+
 export type OutboundMessage =
   | ApproveRequest
   | ModifiedRequest
   | ModeChange
-  | PauseToggle;
+  | PauseToggle
+  | RequestSuggestion;
 
 export interface PersistedState {
   gemmaUnavailableNoticeShown: boolean;

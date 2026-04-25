@@ -57,8 +57,12 @@ async def probe() -> None:
         _available = False
 
 
-async def _wait_for_idle() -> None:
-    while gating.stream_in_flight > 0:
+async def _wait_for_idle(max_wait_s: float = 8.0) -> None:
+    """Defer Gemma until the upstream stream completes (NFR-2.3) but never
+    block longer than max_wait_s — if stream_in_flight ever leaks, Gemma
+    would otherwise be silently disabled forever."""
+    deadline = asyncio.get_event_loop().time() + max_wait_s
+    while gating.stream_in_flight > 0 and asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(0.1)
 
 

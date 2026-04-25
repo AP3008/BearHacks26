@@ -45,6 +45,7 @@
   white-space: nowrap;
 }
 .type-badge.type-system { background: var(--cl-color-system); }
+.type-badge.type-tool_def { background: var(--cl-color-tool_def); }
 .type-badge.type-user { background: var(--cl-color-user); color: #160d08; }
 .type-badge.type-assistant { background: var(--cl-color-assistant); color: #160d08; }
 .type-badge.type-tool_call { background: var(--cl-color-tool_call); color: #1a1100; }
@@ -163,6 +164,25 @@
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }
+}
+.gemma-status {
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  font-size: 11.5px;
+  padding: 5px 9px;
+  border-radius: 1px;
+  border: 1px solid var(--cl-border);
+  background: rgba(10, 9, 8, 0.82);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  animation: fade-in 240ms ease both;
+}
+.gemma-status-clean {
+  color: var(--cl-muted);
+}
+.gemma-status-offline {
+  color: var(--cl-flag-low, #d8a65f);
 }
 
 .spinner-dot {

@@ -68,12 +68,28 @@ async def forward_messages(body: dict[str, Any], headers: dict[str, str]) -> Res
 
     async def body_iter() -> AsyncIterator[bytes]:
         gating.stream_in_flight += 1
+        decremented = False
+
+        def _release() -> None:
+            nonlocal decremented
+            if not decremented:
+                gating.stream_in_flight = max(0, gating.stream_in_flight - 1)
+                decremented = True
+
         try:
             async for chunk in upstream.aiter_raw():
                 yield chunk
+        except (httpx.ReadError, httpx.RemoteProtocolError) as exc:
+            logger.warning("forwarder: upstream stream broke: %s", exc)
         finally:
-            gating.stream_in_flight = max(0, gating.stream_in_flight - 1)
-            await upstream.aclose()
+            # Decrement first — if aclose() blocks or raises, we still don't
+            # want stream_in_flight to leak, otherwise Gemma's _wait_for_idle
+            # spins forever.
+            _release()
+            try:
+                await upstream.aclose()
+            except Exception:
+                pass
 
     return StreamingResponse(
         body_iter(),

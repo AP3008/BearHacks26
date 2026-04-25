@@ -79,10 +79,11 @@ export class WebviewProvider {
     const csp = [
       `default-src 'none'`,
       `img-src ${webview.cspSource} data:`,
-      `style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com`,
-      `font-src ${webview.cspSource} https://fonts.gstatic.com`,
-      `script-src 'nonce-${nonce}'`,
-      `connect-src ${webview.cspSource}`,
+      `style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net`,
+      `font-src ${webview.cspSource} https://fonts.gstatic.com https://cdn.jsdelivr.net data:`,
+      `script-src 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+      `connect-src ${webview.cspSource} https://cdn.jsdelivr.net`,
+      `worker-src ${webview.cspSource} blob:`,
     ].join("; ");
 
     // Add nonce to every <script> tag Vite emitted.

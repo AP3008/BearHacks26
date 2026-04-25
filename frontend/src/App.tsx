@@ -4,7 +4,6 @@ import "./App.css";
 import { BarChart } from "./components/BarChart";
 import { EditorPanel } from "./components/EditorPanel";
 import { StatusBar } from "./components/StatusBar";
-import { SystemHeader } from "./components/SystemHeader";
 import { useSelection } from "./hooks/useSelection";
 import { useUndo, type UndoSnapshot } from "./hooks/useUndo";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -13,16 +12,17 @@ import type {
   EditedSection,
   GemmaFlag,
   GemmaFlags,
+  GemmaSuggestion,
   Mode,
   NewRequest,
   Section,
+  Snapshot,
 } from "./types";
 import { getVsCodeApi } from "./vscode-api";
 
 interface CurrentRequest {
   requestId: string;
   model: string;
-  systemSection: Section | null;
   sections: Section[];
   totalTokens: number;
   totalCost: number;
@@ -33,16 +33,32 @@ interface AppState {
   mode: Mode;
   paused: boolean;
   currentRequest: CurrentRequest | null;
+  // Held requests that arrived while another was already pending. The proxy
+  // only ever holds one at a time in normal use, but this guards against
+  // back-to-back rapid prompts silently displacing one another.
+  pendingQueue: NewRequest[];
   gemmaFlagsByIndex: Record<number, GemmaFlag>;
+  // On-demand per-section suggestions, fired when the user opens the editor
+  // (FR-6.6 / FR-8.6 suggestion mode). Keyed by section index since they're
+  // scoped to the currently-viewed request and reset whenever it changes.
+  gemmaSuggestionsByIndex: Record<number, GemmaSuggestion>;
+  // Section indices we've asked Gemma about and haven't gotten a reply for.
+  // Drives the "Gemma analyzing…" spinner — without this, the spinner used
+  // to show whenever no flag existed (forever, for clean sections).
+  pendingSuggestionIndices: Set<number>;
   removedIndices: Set<number>;
   editedSections: Map<number, string>;
   editorOpenForIndex: number | null;
+  gemmaAvailable: boolean;
   gemmaUnavailableNoticeShown: boolean;
 }
 
 type Action =
   | { type: "new_request"; msg: NewRequest }
+  | { type: "snapshot"; msg: Snapshot }
   | { type: "gemma_flags"; msg: GemmaFlags }
+  | { type: "gemma_suggestion"; msg: GemmaSuggestion }
+  | { type: "request_suggestion_pending"; index: number }
   | { type: "gemma_unavailable" }
   | { type: "mode_change"; mode: Mode }
   | { type: "pause_toggle"; paused: boolean }
@@ -54,25 +70,80 @@ type Action =
   | { type: "after_send" }
   | { type: "mark_gemma_notice_seen" };
 
+function buildCurrentRequest(msg: NewRequest, fallbackHeld: boolean): CurrentRequest {
+  return {
+    requestId: msg.requestId,
+    model: msg.model,
+    sections: msg.sections,
+    totalTokens: msg.totalTokens,
+    totalCost: msg.totalCost,
+    held: msg.held ?? fallbackHeld,
+  };
+}
+
+// Distinguish "main conversation" requests from Claude Code's auxiliary
+// calls (title generation, topic detection, conversation summary). Aux
+// calls have a tiny system prompt and ship no `tools`, while every main
+// request defines the full tool set. Without this filter, those tiny aux
+// requests overwrite the main-chat chart on every keystroke.
+function isMainConversationRequest(msg: NewRequest): boolean {
+  return msg.sections.some((s) => s.sectionType === "tool_def");
+}
+
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "snapshot": {
+      const { msg } = action;
+      const incoming = msg.pendingRequest ?? msg.latestRequest ?? null;
+      const isHeld = msg.pendingRequest !== null;
+      const next: AppState = {
+        ...state,
+        mode: msg.mode,
+        paused: msg.paused,
+        gemmaAvailable: msg.gemmaAvailable,
+      };
+      if (incoming && isMainConversationRequest(incoming)) {
+        const sameId = state.currentRequest?.requestId === incoming.requestId;
+        if (!sameId) {
+          next.currentRequest = buildCurrentRequest(incoming, isHeld);
+          next.gemmaFlagsByIndex = {};
+          next.gemmaSuggestionsByIndex = {};
+          next.pendingSuggestionIndices = new Set();
+          next.removedIndices = new Set();
+          next.editedSections = new Map();
+          next.editorOpenForIndex = null;
+        } else if (state.currentRequest && state.currentRequest.held !== isHeld) {
+          next.currentRequest = { ...state.currentRequest, held: isHeld };
+        }
+      }
+      return next;
+    }
     case "new_request": {
       const { msg } = action;
-      const systemSection =
-        msg.sections.find((s) => s.sectionType === "system") ?? null;
-      const sections = msg.sections.filter((s) => s.sectionType !== "system");
+      // Skip auxiliary Claude Code calls (title gen, topic detection,
+      // summarization). They have no tools and tiny system prompts; if we
+      // let them through they overwrite the main chart with 2-3 bars of
+      // noise. The main conversation chart stays put across them.
+      if (!isMainConversationRequest(msg)) {
+        return state;
+      }
+      // If a different request is currently held, queue the new arrival
+      // instead of silently displacing it (which would leave the proxy
+      // waiting on an event nobody can fire).
+      if (
+        state.currentRequest &&
+        state.currentRequest.held &&
+        state.currentRequest.requestId !== msg.requestId
+      ) {
+        return { ...state, pendingQueue: [...state.pendingQueue, msg] };
+      }
+      const isHeld = msg.held ?? state.mode === "ask_permission";
       return {
         ...state,
-        currentRequest: {
-          requestId: msg.requestId,
-          model: msg.model,
-          systemSection,
-          sections,
-          totalTokens: msg.totalTokens,
-          totalCost: msg.totalCost,
-          held: msg.held ?? state.mode === "ask_permission",
-        },
+        currentRequest: buildCurrentRequest(msg, isHeld),
         gemmaFlagsByIndex: {},
+        gemmaSuggestionsByIndex: {},
+        pendingSuggestionIndices: new Set(),
         removedIndices: new Set(),
         editedSections: new Map(),
         editorOpenForIndex: null,
@@ -88,6 +159,33 @@ function reducer(state: AppState, action: Action): AppState {
       const next = { ...state.gemmaFlagsByIndex };
       for (const flag of action.msg.flags) next[flag.sectionIndex] = flag;
       return { ...state, gemmaFlagsByIndex: next };
+    }
+    case "gemma_suggestion": {
+      // Drop late-arriving suggestions for requests we no longer view —
+      // their highlights are character-offset into stale `rawContent`.
+      if (
+        !state.currentRequest ||
+        state.currentRequest.requestId !== action.msg.requestId
+      ) {
+        return state;
+      }
+      const nextSugg = {
+        ...state.gemmaSuggestionsByIndex,
+        [action.msg.sectionIndex]: action.msg,
+      };
+      const nextPending = new Set(state.pendingSuggestionIndices);
+      nextPending.delete(action.msg.sectionIndex);
+      return {
+        ...state,
+        gemmaSuggestionsByIndex: nextSugg,
+        pendingSuggestionIndices: nextPending,
+      };
+    }
+    case "request_suggestion_pending": {
+      if (state.pendingSuggestionIndices.has(action.index)) return state;
+      const next = new Set(state.pendingSuggestionIndices);
+      next.add(action.index);
+      return { ...state, pendingSuggestionIndices: next };
     }
     case "gemma_unavailable":
       return { ...state, gemmaUnavailableNoticeShown: true };
@@ -117,6 +215,22 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, editorOpenForIndex: null };
     case "after_send": {
       const cr = state.currentRequest;
+      // Promote next queued held request (if any) so the user can keep going.
+      if (state.pendingQueue.length > 0) {
+        const [next, ...rest] = state.pendingQueue;
+        const isHeld = next.held ?? state.mode === "ask_permission";
+        return {
+          ...state,
+          currentRequest: buildCurrentRequest(next, isHeld),
+          pendingQueue: rest,
+          gemmaFlagsByIndex: {},
+          gemmaSuggestionsByIndex: {},
+          pendingSuggestionIndices: new Set(),
+          removedIndices: new Set(),
+          editedSections: new Map(),
+          editorOpenForIndex: null,
+        };
+      }
       return {
         ...state,
         currentRequest: cr ? { ...cr, held: false } : null,
@@ -136,15 +250,19 @@ function loadInitialState(): AppState {
     mode: "auto_send",
     paused: false,
     currentRequest: null,
+    pendingQueue: [],
     gemmaFlagsByIndex: {},
+    gemmaSuggestionsByIndex: {},
+    pendingSuggestionIndices: new Set(),
     removedIndices: new Set(),
     editedSections: new Map(),
     editorOpenForIndex: null,
+    // Optimistic until the proxy snapshot tells us otherwise — the snapshot
+    // arrives within a tick of WS connect.
+    gemmaAvailable: true,
     gemmaUnavailableNoticeShown: persisted?.gemmaUnavailableNoticeShown ?? false,
   };
 }
-
-const GEMMA_TIMEOUT_MS = 30_000;
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, loadInitialState);
@@ -172,14 +290,42 @@ export default function App() {
 
   const senders = useWebSocket({
     onNewRequest: (msg: NewRequest) => {
+      // Auxiliary calls (no tools) get filtered inside the reducer; only
+      // clear marks/undo when the chart is actually about to change.
+      const cur = stateRef.current;
+      const isMain = msg.sections.some((s) => s.sectionType === "tool_def");
+      const willReplace =
+        isMain &&
+        !(
+          cur.currentRequest &&
+          cur.currentRequest.held &&
+          cur.currentRequest.requestId !== msg.requestId
+        ) &&
+        (!cur.currentRequest || cur.currentRequest.requestId !== msg.requestId);
       dispatch({ type: "new_request", msg });
-      // Per-request UI state lives outside the reducer in selection / undo;
-      // both must reset whenever a fresh request arrives (NFR-3.3).
-      selection.clearAll();
-      undo.clear();
+      if (willReplace) {
+        selection.clearAll();
+        undo.clear();
+      }
     },
     onGemmaFlags: (msg: GemmaFlags) => dispatch({ type: "gemma_flags", msg }),
+    onGemmaSuggestion: (msg: GemmaSuggestion) =>
+      dispatch({ type: "gemma_suggestion", msg }),
     onGemmaUnavailable: () => dispatch({ type: "gemma_unavailable" }),
+    onSnapshot: (msg: Snapshot) => {
+      const cur = stateRef.current;
+      const incoming = msg.pendingRequest ?? msg.latestRequest ?? null;
+      const isMain =
+        !!incoming && incoming.sections.some((s) => s.sectionType === "tool_def");
+      const replacingRequest =
+        isMain &&
+        (!cur.currentRequest || cur.currentRequest.requestId !== incoming!.requestId);
+      dispatch({ type: "snapshot", msg });
+      if (replacingRequest) {
+        selection.clearAll();
+        undo.clear();
+      }
+    },
   });
 
   // Mock harness — only active when ?mock=1 is in the URL.
@@ -187,26 +333,6 @@ export default function App() {
     if (!isMockMode()) return;
     return installMockHarness();
   }, []);
-
-  // 30s Gemma fallback: if no flags arrive after a fresh request, show the
-  // install notice once (§7.7). Cleared on next new_request.
-  useEffect(() => {
-    if (!state.currentRequest) return;
-    if (state.gemmaUnavailableNoticeShown) return;
-    if (Object.keys(state.gemmaFlagsByIndex).length > 0) return;
-    const requestId = state.currentRequest.requestId;
-    const timer = setTimeout(() => {
-      const cur = stateRef.current;
-      if (
-        cur.currentRequest?.requestId === requestId &&
-        Object.keys(cur.gemmaFlagsByIndex).length === 0 &&
-        !cur.gemmaUnavailableNoticeShown
-      ) {
-        dispatch({ type: "mark_gemma_notice_seen" });
-      }
-    }, GEMMA_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [state.currentRequest, state.gemmaFlagsByIndex, state.gemmaUnavailableNoticeShown]);
 
   // Visible-section computation: source list minus removed indices, with edits
   // overlaid for live token estimation.
@@ -334,9 +460,12 @@ export default function App() {
     dispatch({ type: "after_send" });
   }, [state.currentRequest, state.removedIndices, state.editedSections, senders, undo, selection]);
 
-  const onEditSection = useCallback((index: number, content: string) => {
-    dispatch({ type: "edit_section", index, content });
-  }, []);
+  const onEditSection = useCallback(
+    (index: number, content: string) => {
+      dispatch({ type: "edit_section", index, content });
+    },
+    [],
+  );
 
   const onDeleteFromEditor = useCallback(
     (index: number) => {
@@ -355,9 +484,6 @@ export default function App() {
   const editorSection = useMemo<Section | null>(() => {
     const cr = state.currentRequest;
     if (!cr || state.editorOpenForIndex == null) return null;
-    if (cr.systemSection?.index === state.editorOpenForIndex) {
-      return cr.systemSection;
-    }
     return cr.sections.find((s) => s.index === state.editorOpenForIndex) ?? null;
   }, [state.currentRequest, state.editorOpenForIndex]);
 
@@ -366,10 +492,39 @@ export default function App() {
     return state.editedSections.get(editorSection.index) ?? editorSection.rawContent;
   }, [editorSection, state.editedSections]);
 
+  // Fire Gemma's per-section suggestion (FR-6.6 / FR-8.6) the moment the
+  // editor opens on a section we haven't analyzed yet. Without this the
+  // EditorPanel's spinner used to imply "Gemma is analyzing" forever, even
+  // for sections nobody had asked Gemma about.
+  useEffect(() => {
+    if (!editorSection) return;
+    if (!state.currentRequest) return;
+    if (!state.gemmaAvailable) return;
+    const idx = editorSection.index;
+    if (state.gemmaSuggestionsByIndex[idx]) return;
+    if (state.pendingSuggestionIndices.has(idx)) return;
+    dispatch({ type: "request_suggestion_pending", index: idx });
+    senders.sendRequestSuggestion(state.currentRequest.requestId, idx);
+  }, [
+    editorSection,
+    state.currentRequest,
+    state.gemmaAvailable,
+    state.gemmaSuggestionsByIndex,
+    state.pendingSuggestionIndices,
+    senders,
+  ]);
+
+  const editorSuggestion = editorSection
+    ? state.gemmaSuggestionsByIndex[editorSection.index]
+    : undefined;
+  const editorSuggestionPending = editorSection
+    ? state.pendingSuggestionIndices.has(editorSection.index)
+    : false;
+
   const totalTokens = useMemo(() => {
     const cr = state.currentRequest;
     if (!cr) return 0;
-    let total = cr.systemSection?.tokenCount ?? 0;
+    let total = 0;
     for (const s of visibleSections) total += s.tokenCount;
     return total;
   }, [state.currentRequest, visibleSections]);
@@ -408,42 +563,31 @@ export default function App() {
 
   return (
     <div className={`app ${state.editorOpenForIndex !== null ? "with-editor" : ""}`}>
-      <header className="app-header">
-        <SystemHeader
-          section={cr.systemSection}
-          onOpen={(index) => dispatch({ type: "open_editor", index })}
-        />
-      </header>
-
       <main className="app-main">
-        <AnimatePresence mode="sync" initial={false}>
-          <motion.div
-            key={cr.requestId}
-            style={{ position: "absolute", inset: 0, display: "flex" }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-          >
-            <BarChart
-              sections={visibleSections}
-              selectedIndices={selection.selectedIndices}
-              markedForDelete={selection.markedForDelete}
-              gemmaFlagsByIndex={state.gemmaFlagsByIndex}
-              onSelect={(index, shift) => {
-                if (shift) {
-                  selection.rangeSelect(
-                    index,
-                    visibleSections.map((s) => s.index),
-                  );
-                } else {
-                  selection.select(index);
-                }
-              }}
-              onOpenEditor={(index) => dispatch({ type: "open_editor", index })}
-            />
-          </motion.div>
-        </AnimatePresence>
+        {/* Don't key on requestId — Claude Code emits a fresh requestId per
+            tool-chain step, so keying here used to cross-fade the entire
+            chart 5–10× per turn, making bars look like they were "missing"
+            or flashing. The chart now updates in place. */}
+        <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+          <BarChart
+            sections={visibleSections}
+            allSections={cr.sections}
+            selectedIndices={selection.selectedIndices}
+            markedForDelete={selection.markedForDelete}
+            gemmaFlagsByIndex={state.gemmaFlagsByIndex}
+            onSelect={(index, shift) => {
+              if (shift) {
+                selection.rangeSelect(
+                  index,
+                  visibleSections.map((s) => s.index),
+                );
+              } else {
+                selection.select(index);
+              }
+            }}
+            onOpenEditor={(index) => dispatch({ type: "open_editor", index })}
+          />
+        </div>
 
         <AnimatePresence>
           {editorSection && (
@@ -452,6 +596,9 @@ export default function App() {
               section={editorSection}
               content={editorContent}
               gemmaFlag={state.gemmaFlagsByIndex[editorSection.index]}
+              suggestion={editorSuggestion}
+              suggestionPending={editorSuggestionPending}
+              gemmaAvailable={state.gemmaAvailable}
               onSave={(text) => onEditSection(editorSection.index, text)}
               onDelete={() => onDeleteFromEditor(editorSection.index)}
               onClose={() => dispatch({ type: "close_editor" })}
@@ -468,10 +615,7 @@ export default function App() {
         totalCost={totalCost}
         hasEdits={hasEstimate}
         canUndo={undo.size() > 0}
-        gemmaUnavailable={
-          state.gemmaUnavailableNoticeShown &&
-          Object.keys(state.gemmaFlagsByIndex).length === 0
-        }
+        gemmaUnavailable={!state.gemmaAvailable}
         onModeChange={(mode) => {
           dispatch({ type: "mode_change", mode });
           senders.sendModeChange(mode);

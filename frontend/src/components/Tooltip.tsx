@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { GemmaFlag, Section } from "../types";
 import "./Tooltip.css";
 
@@ -11,6 +12,7 @@ interface Props {
 
 const TYPE_LABEL: Record<string, string> = {
   system: "System prompt",
+  tool_def: "Tool definition",
   user: "User message",
   assistant: "Assistant response",
   tool_call: "Tool call",
@@ -27,24 +29,43 @@ function formatCost(c: number) {
   return `$${c.toFixed(3)}`;
 }
 
-function clampToViewport(anchor: { x: number; y: number }) {
-  const tooltipW = 280;
-  const tooltipH = 160;
+function clampToViewport(
+  anchor: { x: number; y: number },
+  size: { w: number; h: number },
+) {
   const margin = 8;
-  const x = Math.min(window.innerWidth - tooltipW - margin, anchor.x + 12);
-  const y = Math.min(window.innerHeight - tooltipH - margin, anchor.y + 12);
-  return { x: Math.max(margin, x), y: Math.max(margin, y) };
+  const offset = 12;
+  const x = Math.min(window.innerWidth - size.w - margin, anchor.x + offset);
+  const wantsBelowY = anchor.y + offset;
+  const y =
+    wantsBelowY + size.h > window.innerHeight - margin
+      ? Math.max(margin, anchor.y - size.h - offset)
+      : wantsBelowY;
+  return { x: Math.max(margin, x), y };
 }
 
 export function Tooltip({ section, gemmaFlag, turnNumber, anchor }: Props) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ w: 280, h: 160 });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width !== size.w || rect.height !== size.h) {
+      setSize({ w: rect.width, h: rect.height });
+    }
+  });
+
   const show = !!(section && anchor);
-  const pos = show ? clampToViewport(anchor!) : { x: 0, y: 0 };
+  const pos = show ? clampToViewport(anchor!, size) : { x: 0, y: 0 };
 
   return (
     <AnimatePresence>
       {show && (
         <motion.div
           key={section!.index}
+          ref={ref}
           className="tooltip"
           style={{ left: pos.x, top: pos.y }}
           role="tooltip"
