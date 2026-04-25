@@ -52,19 +52,6 @@ export interface GemmaFlags {
   flags: GemmaFlag[];
 }
 
-export interface SuggestionHighlight {
-  start: number;
-  end: number;
-  reason: string;
-}
-
-export interface GemmaSuggestion {
-  type: "gemma_suggestion";
-  requestId: string;
-  sectionIndex: number;
-  highlights: SuggestionHighlight[];
-}
-
 export interface GemmaUnavailable {
   type: "gemma_unavailable";
 }
@@ -92,7 +79,6 @@ export interface TimeoutWarning {
 export type InboundMessage =
   | NewRequest
   | GemmaFlags
-  | GemmaSuggestion
   | GemmaUnavailable
   | Snapshot
   | TimeoutWarning;
@@ -124,8 +110,8 @@ export interface PauseToggle {
   paused: boolean;
 }
 
-export interface RequestSuggestion {
-  type: "request_suggestion";
+export interface RequestFlagging {
+  type: "request_flagging";
   requestId: string;
   sectionIndex: number;
 }
@@ -146,7 +132,7 @@ export type OutboundMessage =
   | ModifiedRequest
   | ModeChange
   | PauseToggle
-  | RequestSuggestion
+  | RequestFlagging
   | ResetCanonical
   | CommitEditsNow;
 

@@ -3,7 +3,6 @@ import { getVsCodeApi } from "../vscode-api";
 import type {
   EditedSection,
   GemmaFlags,
-  GemmaSuggestion,
   GemmaUnavailable,
   InboundMessage,
   Mode,
@@ -15,7 +14,6 @@ import type {
 interface Handlers {
   onNewRequest: (msg: NewRequest) => void;
   onGemmaFlags: (msg: GemmaFlags) => void;
-  onGemmaSuggestion?: (msg: GemmaSuggestion) => void;
   onGemmaUnavailable?: (msg: GemmaUnavailable) => void;
   onSnapshot?: (msg: Snapshot) => void;
   onTimeoutWarning?: (msg: TimeoutWarning) => void;
@@ -37,9 +35,6 @@ export function useWebSocket(handlers: Handlers) {
           break;
         case "gemma_flags":
           handlersRef.current.onGemmaFlags(data);
-          break;
-        case "gemma_suggestion":
-          handlersRef.current.onGemmaSuggestion?.(data);
           break;
         case "gemma_unavailable":
           handlersRef.current.onGemmaUnavailable?.(data);
@@ -80,8 +75,8 @@ export function useWebSocket(handlers: Handlers) {
       sendPauseToggle(paused: boolean) {
         api.postMessage({ type: "pause_toggle", paused });
       },
-      sendRequestSuggestion(requestId: string, sectionIndex: number) {
-        api.postMessage({ type: "request_suggestion", requestId, sectionIndex });
+      sendRequestFlagging(requestId: string, sectionIndex: number) {
+        api.postMessage({ type: "request_flagging", requestId, sectionIndex });
       },
       sendResetCanonical() {
         api.postMessage({ type: "reset_canonical" });

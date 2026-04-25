@@ -105,7 +105,7 @@ export function StatusBar({
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.18 }}
           >
-            Install Ollama + Gemma 4 for smart suggestions.
+            Install Ollama + Gemma 4 for smart flagging.
           </motion.div>
         )}
       </AnimatePresence>
