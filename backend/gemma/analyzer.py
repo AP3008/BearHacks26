@@ -197,16 +197,23 @@ async def flag(request_id: str, sections: list[Section]) -> None:
 
 
 async def flag_for_section(request_id: str, section: Section) -> None:
+    # Always respond (even empty) so the UI can clear its pending spinner.
     if not _available:
+        try:
+            await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
+        except Exception:
+            logger.exception("gemma: failed to send empty flags (unavailable)")
         return
     try:
         await _wait_for_idle()
         user = prompts.flagging_user([section])
         raw = await _chat(prompts.FLAGGING_SYSTEM, user)
         if raw is None:
+            await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
             return
         flags = parse_flags(raw, default_section_index=section.index)
         if not flags:
+            await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
             return
         # UI expects one flag per section index. Collapse into a single entry.
         severity_rank = {"low": 0, "medium": 1, "high": 2}
@@ -218,3 +225,7 @@ async def flag_for_section(request_id: str, section: Section) -> None:
         await ws_manager.send(GemmaFlags(requestId=request_id, flags=[collapsed]))
     except Exception:
         logger.exception("gemma: flag_for_section task crashed")
+        try:
+            await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
+        except Exception:
+            logger.exception("gemma: failed to send empty flags after crash")
