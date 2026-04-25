@@ -94,7 +94,8 @@ async def _chat_flagging(
                         "format": "json",
                         "options": {
                             "temperature": 0,
-                            "num_predict": 256,
+                            # Allow enough room for large highlight arrays.
+                            "num_predict": 2048,
                         },
                         "keep_alive": "10m",
                         "messages": [
@@ -139,10 +140,10 @@ async def _chat_flagging(
         content = getattr(msg, "content", None)
         thinking = getattr(msg, "thinking", None)
 
-    # Log every response; do not use `thinking` as parseable output (often non-JSON).
+    # Log every response.
     think_preview = ""
     if isinstance(thinking, str) and thinking.strip():
-        think_preview = thinking.strip().replace("\n", "\\n")[:800]
+        think_preview = thinking.strip().replace("\n", "\\n")[:4000]
 
     if content is not None and not isinstance(content, str):
         logger.warning(
@@ -163,17 +164,30 @@ async def _chat_flagging(
             "gemma: flagging response content (model=%s)%s content=%s thinking_preview=%s",
             _model,
             ctx,
-            out[:2000],
-            think_preview[:400] if think_preview else "",
+            out[:12000],
+            think_preview[:1200] if think_preview else "",
         )
         return content
 
     if isinstance(thinking, str) and thinking.strip():
+        # Some Ollama builds place the JSON into `message.thinking` even when
+        # `format="json"` is set. If `content` is empty, try extracting flags
+        # from thinking so we don't silently drop valid results.
+        recovered = parse_flags(thinking, default_section_index=log_section_index)
+        if recovered:
+            logger.warning(
+                "gemma: recovered flags from thinking (model=%s host=%s flags=%d thinking_preview=%s)",
+                _model,
+                _host,
+                len(recovered),
+                think_preview[:1200],
+            )
+            return thinking
         logger.warning(
-            "gemma: empty content but thinking present (ignored for JSON; model=%s host=%s) thinking=%s",
+            "gemma: empty content but thinking present (no recoverable JSON; model=%s host=%s) thinking=%s",
             _model,
             _host,
-            think_preview[:1200],
+            think_preview[:2000],
         )
     else:
         try:
@@ -204,7 +218,15 @@ async def flag(request_id: str, sections: list[Section]) -> None:
         raw = await _chat_flagging(prompts.FLAGGING_SYSTEM, user, log_request_id=request_id)
         if raw is None:
             return
-        flags = parse_flags(raw)
+        # We only ever send one section in the user payload today (see
+        # prompts.flagging_user). Provide a default index so we don't drop
+        # otherwise-valid structured output that omits sectionIndex.
+        default_idx = sections[0].index if sections else None
+        flags = (
+            parse_flags(raw, default_section_index=default_idx)
+            if default_idx is not None
+            else parse_flags(raw)
+        )
         await ws_manager.send(GemmaFlags(requestId=request_id, flags=flags))
     except Exception:
         logger.exception("gemma: flag task crashed")
