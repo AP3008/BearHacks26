@@ -52,6 +52,7 @@ The prompt is given as Gemma-style turns. Order matters:
 Your job is to be AGGRESSIVE. Flag liberally and extensively. Better to flag too much than too little.
 
 Flag text that is:
+- Irrelevant to coding and engineering.
 - Redundant or repetitive (including overlap with BACKBOARD_SIMILAR_EXCERPTS when that turn is present)
 - Stale or outdated information
 - Filler, fluff, or unnecessary elaboration

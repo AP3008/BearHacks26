@@ -141,45 +141,28 @@ def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tu
     and remove `cache_control` from any additional blocks.
     """
 
-    def _maybe_strip(block: Any, state: dict[str, int]) -> None:
-        if not isinstance(block, dict):
+    def _walk(value: Any, state: dict[str, int]) -> None:
+        # Anthropic's `cache_control` shows up on "content blocks", but different
+        # clients nest those blocks in different places (system, messages,
+        # tool_result content, tool inputs, etc.). Walk the full JSON structure
+        # so we reliably stay under the upstream cap.
+        if isinstance(value, dict):
+            if "cache_control" in value:
+                state["seen"] += 1
+                if state["seen"] > max_blocks:
+                    value.pop("cache_control", None)
+                    state["stripped"] += 1
+            for v in value.values():
+                _walk(v, state)
             return
-        if "cache_control" in block:
-            state["seen"] += 1
-            if state["seen"] > max_blocks:
-                block.pop("cache_control", None)
-                state["stripped"] += 1
-
-        # Recurse into nested content arrays (e.g., tool_result blocks)
-        nested_content = block.get("content")
-        if isinstance(nested_content, list):
-            for inner_block in nested_content:
-                _maybe_strip(inner_block, state)
+        if isinstance(value, list):
+            for item in value:
+                _walk(item, state)
+            return
 
     state = {"seen": 0, "stripped": 0}
 
-    # 1) system: may be string OR list[content_block]
-    system = body.get("system")
-    if isinstance(system, list):
-        for block in system:
-            _maybe_strip(block, state)
-
-    # 2) tools: list[tool_def]
-    tools = body.get("tools")
-    if isinstance(tools, list):
-        for tool in tools:
-            _maybe_strip(tool, state)
-
-    # 3) messages: list[{role, content}], where content may be string OR list[content_block]
-    messages = body.get("messages")
-    if isinstance(messages, list):
-        for msg in messages:
-            if not isinstance(msg, dict):
-                continue
-            content = msg.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    _maybe_strip(block, state)
+    _walk(body, state)
 
     return body, state["stripped"]
 
