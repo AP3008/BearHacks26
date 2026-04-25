@@ -161,6 +161,12 @@ async def handle(request: Request) -> Response:
                 logger.info("interceptor: cancelled request_id=%s", request_id)
                 return Response(status_code=499)
             if held.decision == "approve_modified":
+                logger.info(
+                    "interceptor: applying edits request_id=%s removed=%d edited=%d",
+                    request_id,
+                    len(held.removed_indices),
+                    len(held.edited_sections),
+                )
                 body = gating.apply_edits(body, held.removed_indices, held.edited_sections)
         finally:
             gating.release(request_id)
