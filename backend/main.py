@@ -13,11 +13,13 @@ import forwarder
 import gating
 import interceptor
 import ws_manager
+from backboard import client as backboard_client
 from gemma import analyzer
 from models import (
     Approve,
     ApproveModified,
     Cancel,
+    CommitEditsNow,
     GemmaUnavailable,
     InboundMessage,
     ModeChange,
@@ -38,20 +40,24 @@ logger = logging.getLogger("contextlens")
 ANTHROPIC_UPSTREAM_URL = os.getenv("ANTHROPIC_UPSTREAM_URL", "https://api.anthropic.com")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:e4b")
+BACKBOARD_API_KEY = os.getenv("BACKBOARD_API_KEY", "")
+BACKBOARD_ASSISTANT_ID = os.getenv("BACKBOARD_ASSISTANT_ID", "")
+BACKBOARD_API_URL = os.getenv("BACKBOARD_API_URL", "")
 
 
 def _build_snapshot() -> Snapshot:
     """Authoritative state replay sent to every WS client on connect. Without
     this, opening the panel after a request was already held leaves the proxy
     waiting forever — the user never sees the Send button."""
-    held = interceptor.held_request()
+    held_list = interceptor.held_requests()
     latest = interceptor.latest_request()
     gating_state = gating.state()
     return Snapshot(
         mode=gating_state["mode"],
         paused=gating_state["paused"],
         gemmaAvailable=analyzer.is_available(),
-        pendingRequest=held,
+        pendingRequest=held_list[0] if held_list else None,
+        pendingRequests=held_list,
         latestRequest=latest,
         recentRequests=interceptor.recent_history(),
     )
@@ -61,17 +67,25 @@ def _build_snapshot() -> Snapshot:
 async def lifespan(app: FastAPI):
     forwarder.configure(ANTHROPIC_UPSTREAM_URL)
     analyzer.configure(OLLAMA_HOST, OLLAMA_MODEL)
+    backboard_client.configure(
+        api_key=BACKBOARD_API_KEY,
+        assistant_id=BACKBOARD_ASSISTANT_ID,
+        base_url=BACKBOARD_API_URL or None,
+    )
     ws_manager.register_snapshot_builder(_build_snapshot)
     await forwarder.startup()
+    await backboard_client.startup()
     await analyzer.probe()
     logger.info(
-        "contextlens proxy ready (upstream=%s, gemma_available=%s)",
+        "contextlens proxy ready (upstream=%s, gemma_available=%s, backboard=%s)",
         ANTHROPIC_UPSTREAM_URL,
         analyzer.is_available(),
+        backboard_client.is_configured(),
     )
     try:
         yield
     finally:
+        await backboard_client.shutdown()
         await forwarder.shutdown()
 
 
@@ -98,7 +112,11 @@ async def _dispatch(msg: InboundMessage) -> None:
             return
         asyncio.create_task(analyzer.flag_for_section(request_id=msg.requestId, section=section))
     elif isinstance(msg, ResetCanonical):
-        await conversation_state.reset()
+        await conversation_state.reset_edits()
+        await interceptor.broadcast_canonical_snapshot()
+    elif isinstance(msg, CommitEditsNow):
+        await conversation_state.commit_edits(msg.removedIndices, msg.editedSections)
+        await interceptor.broadcast_canonical_snapshot()
 
 
 @app.websocket("/ws")

@@ -51,6 +51,11 @@ def _client_or_raise() -> httpx.AsyncClient:
 
 async def forward_messages(body: dict[str, Any], headers: dict[str, str]) -> Response:
     url = f"{_upstream}/v1/messages"
+    # Defensive net: even on paths that didn't go through apply_edits (aux
+    # calls, canonical/incoming drift across sessions) we must not ship a
+    # tool_result whose tool_use_id has no match in the prior assistant turn —
+    # Anthropic rejects the request with HTTP 400 and the conversation aborts.
+    body = gating.prune_orphan_tool_pairs(body)
     payload = json.dumps(body).encode("utf-8")
     fwd_headers = _filter_request_headers(headers)
     fwd_headers["content-type"] = "application/json"
@@ -100,6 +105,17 @@ async def forward_messages(body: dict[str, Any], headers: dict[str, str]) -> Res
 
 
 async def passthrough(request: Request, full_path: str) -> Response:
+    # Forensic trail for "what reached Anthropic that the user couldn't see":
+    # the catch-all covers /v1/files, /v1/messages/batches, model-listing,
+    # token-counting, and anything else Claude Code (or another client) calls
+    # outside /v1/messages. We don't gate these — schemas vary too much — but
+    # we surface them in the proxy log so the user has a record. WARNING level
+    # so they stand out in the ContextLens output channel.
+    logger.warning(
+        "forwarder: passthrough %s /%s — forwarded transparently, not gated",
+        request.method,
+        full_path,
+    )
     url = f"{_upstream}/{full_path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"

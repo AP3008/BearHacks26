@@ -8,6 +8,7 @@ export type SectionType =
   | "assistant"
   | "tool_call"
   | "tool_output"
+  | "image"
   | "unknown";
 
 export interface Section {
@@ -17,6 +18,10 @@ export interface Section {
   cost: number;
   contentPreview: string;
   rawContent: string;
+  // Index of the parent message in body.messages, or -1 for system / tool_def
+  // / string-content slots that don't belong to a list-content message. Used
+  // by the bar chart to keep multi-block messages on the same turn.
+  messageIndex?: number;
 }
 
 export type RequestKind = "top_level" | "tool_chain";
@@ -59,6 +64,9 @@ export interface Snapshot {
   paused: boolean;
   gemmaAvailable: boolean;
   pendingRequest: NewRequest | null;
+  // All requests currently held for approval, oldest first. `pendingRequest`
+  // above is the head of this list (kept for back-compat).
+  pendingRequests?: NewRequest[];
   latestRequest: NewRequest | null;
   recentRequests?: NewRequest[];
 }
@@ -112,13 +120,21 @@ export interface ResetCanonical {
   type: "reset_canonical";
 }
 
+export interface CommitEditsNow {
+  type: "commit_edits_now";
+  requestId: string;
+  removedIndices: number[];
+  editedSections: EditedSection[];
+}
+
 export type OutboundMessage =
   | ApproveRequest
   | ModifiedRequest
   | ModeChange
   | PauseToggle
   | RequestFlagging
-  | ResetCanonical;
+  | ResetCanonical
+  | CommitEditsNow;
 
 export interface PersistedState {
   gemmaUnavailableNoticeShown: boolean;

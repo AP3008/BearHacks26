@@ -12,6 +12,7 @@ SectionType = Literal[
     "assistant",
     "tool_call",
     "tool_output",
+    "image",
     "unknown",
 ]
 Severity = Literal["high", "medium", "low"]
@@ -26,6 +27,11 @@ class Section(BaseModel):
     cost: float
     contentPreview: str
     rawContent: str
+    # Index of the parent message in body["messages"], or -1 for sections that
+    # don't belong to a list-content message (system, tool_def, string-content
+    # messages). Used by the chart's turn detection to keep multi-block
+    # messages collapsed into a single turn.
+    messageIndex: int = -1
 
 
 class NewRequest(BaseModel):
@@ -87,6 +93,10 @@ class Snapshot(BaseModel):
     gemmaAvailable: bool
     pendingRequest: Optional[NewRequest] = None
     latestRequest: Optional[NewRequest] = None
+    # All requests currently held for approval, oldest first. `pendingRequest`
+    # above is kept for back-compat (= first of this list); newer panels read
+    # the full list to render a queue badge and reconcile their local queue.
+    pendingRequests: list[NewRequest] = Field(default_factory=list)
     # Recent history (oldest first) so a freshly-attached panel can show a
     # full request picker, not just the most recent call.
     recentRequests: list[NewRequest] = Field(default_factory=list)
@@ -134,6 +144,21 @@ class ResetCanonical(BaseModel):
     type: Literal["reset_canonical"]
 
 
+class CommitEditsNow(BaseModel):
+    """Auto-mode commit: apply user edits to the canonical conversation
+    immediately, decoupled from the held-request approve flow. In held mode
+    the user clicks Send → ApproveModified does this in lockstep with
+    upstream forwarding. In auto-send mode the request has already flown
+    through, so edits affect *future* requests — the proxy applies them
+    eagerly so the panel's chart and the next forwarded body both reflect
+    the user's intent without waiting for Claude Code's next call."""
+
+    type: Literal["commit_edits_now"]
+    requestId: str
+    removedIndices: list[int] = Field(default_factory=list)
+    editedSections: list[EditedSection] = Field(default_factory=list)
+
+
 InboundMessage = Annotated[
     Union[
         Approve,
@@ -143,6 +168,7 @@ InboundMessage = Annotated[
         PauseToggle,
         RequestFlagging,
         ResetCanonical,
+        CommitEditsNow,
     ],
     Field(discriminator="type"),
 ]

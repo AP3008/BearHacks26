@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -13,6 +14,7 @@ import conversation_state
 import forwarder
 import gating
 import ws_manager
+from backboard import ingest as bb_ingest
 from models import NewRequest, Section
 
 logger = logging.getLogger(__name__)
@@ -22,14 +24,17 @@ _HISTORY_LIMIT = 20
 recent_sections: dict[str, list[Section]] = {}
 _recent_order: list[str] = []
 
-# Snapshot inputs — `_held_request` is the request currently waiting on user
-# approval (at most one in normal use, since Claude Code is single-flight).
+# Snapshot inputs — `_held_requests` is the FIFO list of requests currently
+# waiting on user approval. Claude Code is normally single-flight so this is
+# usually 0-1 items, but two terminals pointing at the same proxy in
+# ask_permission mode can put multiple holds in flight simultaneously, and
+# without surfacing the full list the panel can only act on the first.
 # `_latest_request` is the last new_request we sent so a freshly-attached
 # panel still has *something* to render even when nothing is held.
 # `_history` is a rolling buffer so the panel can show a request picker —
 # without it, Claude Code's auxiliary calls (title generation, summary, etc.)
 # silently overwrite the user's actual prompt within milliseconds.
-_held_request: Optional[NewRequest] = None
+_held_requests: list[NewRequest] = []
 _latest_request: Optional[NewRequest] = None
 _history: list[NewRequest] = []
 
@@ -73,7 +78,15 @@ def _remember(request_id: str, sections: list[Section]) -> None:
 
 
 def held_request() -> Optional[NewRequest]:
-    return _held_request
+    """Back-compat: return the oldest held request (= the one the user should
+    act on first). Newer panels read `held_requests()` for the full queue."""
+    return _held_requests[0] if _held_requests else None
+
+
+def held_requests() -> list[NewRequest]:
+    """All requests currently held for approval, oldest first. Snapshot
+    consumers iterate this so a reconnecting panel can rebuild its queue."""
+    return list(_held_requests)
 
 
 def latest_request() -> Optional[NewRequest]:
@@ -88,6 +101,35 @@ def _push_history(req: NewRequest) -> None:
     _history.append(req)
     while len(_history) > _HISTORY_LIMIT:
         _history.pop(0)
+
+
+async def broadcast_canonical_snapshot() -> None:
+    """Re-classify the current canonical and push it to the panel as a
+    synthesized top-level NewRequest. Used after Reset Edits and after
+    auto-mode commit_edits_now, so the chart re-renders immediately
+    without waiting for Claude Code's next call. No-op if canonical is
+    empty (no requests have flowed through yet)."""
+    global _latest_request
+    body = await conversation_state.get_canonical()
+    if not body:
+        return
+    request_id = uuid.uuid4().hex
+    sections, total_tokens, total_cost, model = classifier.classify(body)
+    _remember(request_id, sections)
+    new_request = NewRequest(
+        requestId=request_id,
+        sections=sections,
+        totalTokens=total_tokens,
+        totalCost=total_cost,
+        model=model,
+        held=False,
+        kind="top_level",
+        lastUserPreview=_last_user_preview(body.get("messages", [])),
+        createdAt=time.time(),
+    )
+    _latest_request = new_request
+    _push_history(new_request)
+    await ws_manager.send(new_request)
 
 
 def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tuple[dict[str, Any], int]:
@@ -139,19 +181,28 @@ def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tu
 
 
 async def handle(request: Request) -> Response:
-    global _held_request, _latest_request
+    global _latest_request
 
     raw = await request.body()
     headers = dict(request.headers)
+    bb_ingest.set_user_key(headers.get("x-contextlens-user", "local"))
 
     try:
         body: dict[str, Any] = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        logger.info("interceptor: non-json body, forwarding raw")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning(
+            "interceptor: non-json body (%s, len=%d) — gate bypassed, forwarding raw",
+            type(exc).__name__,
+            len(raw),
+        )
         return await _forward_raw(raw, headers)
 
     if not isinstance(body, dict) or "messages" not in body:
-        logger.info("interceptor: missing messages array, forwarding raw")
+        keys = list(body.keys()) if isinstance(body, dict) else []
+        logger.warning(
+            "interceptor: body missing 'messages' (top-level keys=%s) — gate bypassed, forwarding raw",
+            keys,
+        )
         return await _forward_raw(raw, headers)
 
     # Aux calls (title gen, topic detection, summarization) ship no `tools`
@@ -161,6 +212,9 @@ async def handle(request: Request) -> Response:
     # untouched, exactly like before.
     if not conversation_state.is_main_conversation(body):
         return await forwarder.forward_messages(body, headers)
+
+    request_id = uuid.uuid4().hex
+    pre_sync = copy.deepcopy(body)
 
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
@@ -175,7 +229,8 @@ async def handle(request: Request) -> Response:
             stripped,
         )
 
-    request_id = uuid.uuid4().hex
+    bb_ingest.schedule_raw_incoming(pre_sync, request_id)
+    bb_ingest.schedule_canonical_synced(copy.deepcopy(body), request_id)
     sections, total_tokens, total_cost, model = classifier.classify(body)
     _remember(request_id, sections)
 
@@ -216,7 +271,7 @@ async def handle(request: Request) -> Response:
     _latest_request = new_request
     _push_history(new_request)
     if must_hold:
-        _held_request = new_request
+        _held_requests.append(new_request)
 
     await ws_manager.send(new_request)
     # Gemma flagging runs on demand when requested by the UI (see
@@ -237,12 +292,18 @@ async def handle(request: Request) -> Response:
                     len(held.edited_sections),
                 )
                 body = await conversation_state.commit_edits(
-                    held.removed_indices, held.edited_sections
+                    held.removed_indices,
+                    held.edited_sections,
+                    request_id=request_id,
                 )
         finally:
             gating.release(request_id)
-            if _held_request is not None and _held_request.requestId == request_id:
-                _held_request = None
+            # Drop this request from the held queue regardless of position —
+            # decision (approve/cancel/modified) has been made or we errored.
+            for i, req in enumerate(_held_requests):
+                if req.requestId == request_id:
+                    _held_requests.pop(i)
+                    break
 
     return await forwarder.forward_messages(body, headers)
 

@@ -108,6 +108,22 @@
   white-space: nowrap;
 }
 
+.queue-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--cl-border-strong);
+  border-radius: 1px;
+  background: var(--cl-accent-soft);
+  color: var(--cl-accent-strong);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .warning-banner {
   display: flex;
   align-items: center;
