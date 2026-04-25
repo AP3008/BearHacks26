@@ -1,29 +1,20 @@
 .editor-panel {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: clamp(520px, 48%, 860px);
+  inset: 0;
   background: var(--cl-bg);
-  border-left: 1px solid var(--cl-border);
+  border-left: 1px solid var(--cl-border-strong);
   display: flex;
   flex-direction: column;
-  animation: slide-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
   z-index: 10;
-  min-height: 0;
-}
-
-@keyframes slide-in {
-  from { transform: translateX(8%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  will-change: transform, opacity;
 }
 
 .editor-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 18px;
+  gap: 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--cl-border);
   background: var(--cl-surface);
 }
@@ -31,24 +22,24 @@
 .editor-head-left {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 
 .editor-head-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .type-badge {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  padding: 5px 10px;
+  padding: 3px 7px;
   border-radius: 1px;
   color: #160d08;
   white-space: nowrap;
@@ -66,13 +57,13 @@
 
 .editor-head .muted {
   color: var(--cl-muted);
-  font-size: 14px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .editor-head .estimate {
   opacity: 0.55;
   font-style: italic;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .btn {
@@ -80,9 +71,9 @@
   border: 1px solid var(--cl-border);
   background: var(--cl-bg-deep);
   color: var(--cl-text);
-  padding: 9px 15px;
+  padding: 6px 10px;
   border-radius: 1px;
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   transition:
     background 120ms ease,
@@ -129,8 +120,8 @@
 
 @media (max-width: 760px) {
   .editor-panel {
-    width: 100%;
     border-left: none;
+    border-top: 1px solid var(--cl-border);
   }
 
   .editor-head {
@@ -155,15 +146,15 @@
 
 .gemma-spinner {
   position: absolute;
-  bottom: 16px;
-  right: 18px;
+  bottom: 12px;
+  right: 14px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: 8px;
+  font-size: 12px;
   color: var(--cl-muted);
   background: rgba(10, 9, 8, 0.82);
-  padding: 7px 12px;
+  padding: 5px 9px;
   border-radius: 1px;
   border: 1px solid var(--cl-border);
   pointer-events: none;
@@ -175,8 +166,8 @@
 }
 
 .spinner-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 1px;
   background: var(--cl-flag-medium);
   animation: pulse 1.2s ease-in-out infinite;

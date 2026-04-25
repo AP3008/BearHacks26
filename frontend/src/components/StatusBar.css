@@ -10,15 +10,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 22px;
-  padding: 14px 20px;
-  font-size: 15px;
+  gap: 16px;
+  padding: 10px 14px;
+  font-size: 13px;
   flex-wrap: wrap;
 }
 
 .status-stats {
   display: flex;
-  gap: 28px;
+  gap: 20px;
   align-items: center;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
@@ -27,24 +27,24 @@
 .stat {
   display: inline-flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 6px;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cl-muted);
 }
 
 .stat-value {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--cl-text);
 }
 
 .stat-value .estimate {
-  font-size: 12px;
+  font-size: 11px;
   font-style: italic;
   font-weight: 400;
   color: var(--cl-muted);
@@ -54,7 +54,7 @@
 .status-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 1 1 460px;
   justify-content: flex-end;
   min-width: 0;
@@ -74,8 +74,8 @@
   border: none;
   background: transparent;
   color: var(--cl-muted);
-  padding: 9px 15px;
-  font-size: 14px;
+  padding: 6px 10px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 120ms ease;
   white-space: nowrap;
@@ -103,7 +103,7 @@
 .btn.send {
   font-weight: 600;
   letter-spacing: 0.02em;
-  padding: 10px 20px;
+  padding: 7px 14px;
   position: relative;
   white-space: nowrap;
 }
@@ -111,29 +111,29 @@
 .warning-banner {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   background: rgba(166, 59, 36, 0.22);
   color: #ffd1c2;
   border-bottom: 1px solid rgba(242, 140, 69, 0.28);
-  padding: 9px 20px;
-  font-size: 14px;
+  padding: 7px 14px;
+  font-size: 12px;
   animation: fade-in 200ms ease both;
 }
 .warning-icon {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
   border-radius: 1px;
   background: var(--cl-color-marked);
   color: #fff0e8;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .gemma-notice {
-  padding: 7px 20px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 12px;
   color: var(--cl-muted);
   border-bottom: 1px dashed var(--cl-border);
   background: rgba(217, 119, 58, 0.06);
@@ -143,7 +143,7 @@
   .status-row {
     align-items: stretch;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 8px 10px;
   }
 
   .status-stats {
@@ -173,7 +173,7 @@
 
   .mode-toggle button:nth-child(2)::after {
     content: "Ask";
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .btn {
