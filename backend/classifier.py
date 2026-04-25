@@ -71,6 +71,8 @@ def _classify_block(role: str, block: Any) -> tuple[SectionType, str]:
         # don't render the bytes — just a sentinel so the user can see and
         # delete it. Edits don't round-trip into the structured source.
         return "image", "[image content]"
+    if btype == "thinking":
+        return "thinking", _coerce_text(block.get("thinking") or block.get("text") or "")
     return "unknown", _coerce_text(block)
 
 

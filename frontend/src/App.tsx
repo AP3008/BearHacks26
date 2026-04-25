@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import "./App.css";
 import { BarChart } from "./components/BarChart";
 import { EditorPanel } from "./components/EditorPanel";
@@ -275,6 +275,13 @@ export default function App() {
     ),
   });
 
+  const [undoToast, setUndoToast] = useState<{ message: string; id: number } | null>(null);
+  useEffect(() => {
+    if (!undoToast) return;
+    const t = setTimeout(() => setUndoToast(null), 1800);
+    return () => clearTimeout(t);
+  }, [undoToast?.id]);
+
   // Persist the one-time Gemma-unavailable notice flag so reload doesn't
   // re-show it (instructions §7.7 / FR-8.8).
   useEffect(() => {
@@ -441,9 +448,41 @@ export default function App() {
 
   const handleUndo = useCallback(() => {
     if (undo.size() === 0) return;
-    undo.undo();
+    const prevRemoved = state.removedIndices;
+    const prevEdited = state.editedSections;
+    const snapshot = undo.undo();
     selection.clearAll();
-  }, [undo, selection]);
+    if (snapshot) {
+      const cr = state.currentRequest;
+      const restoredSections = cr
+        ? cr.sections.filter(
+            (s) => prevRemoved.has(s.index) && !snapshot.removedIndices.has(s.index),
+          )
+        : [];
+      let message: string;
+      if (restoredSections.length === 1) {
+        const typeLabel: Record<string, string> = {
+          system: "system prompt",
+          tool_def: "tool definition",
+          user: "user message",
+          assistant: "assistant response",
+          tool_call: "tool call",
+          tool_output: "tool output",
+          image: "image",
+          thinking: "thinking block",
+          unknown: "section",
+        };
+        message = `Restored: ${typeLabel[restoredSections[0].sectionType] ?? "section"}`;
+      } else if (restoredSections.length > 1) {
+        message = `Restored ${restoredSections.length} sections`;
+      } else if (prevEdited.size !== snapshot.editedSections.size) {
+        message = "Edit undone";
+      } else {
+        message = "Undo";
+      }
+      setUndoToast({ message, id: Date.now() });
+    }
+  }, [undo, selection, state.removedIndices, state.editedSections, state.currentRequest]);
 
   // App-level keybindings — only when the editor panel is closed so Monaco
   // owns its keys (instructions §10).
@@ -657,6 +696,23 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        <div className="undo-toast-anchor">
+          <AnimatePresence>
+            {undoToast && (
+              <motion.div
+                key={undoToast.id}
+                className="undo-toast"
+                initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 340, damping: 30 }}
+              >
+                {undoToast.message}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </main>
 
       <StatusBar

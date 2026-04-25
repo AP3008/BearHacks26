@@ -31,6 +31,7 @@ const TYPE_LABEL: Record<string, string> = {
   tool_call: "Tool call",
   tool_output: "Tool output",
   image: "Image content",
+  thinking: "Thinking",
   unknown: "Unknown section",
 };
 
@@ -39,7 +40,7 @@ const TYPE_LABEL: Record<string, string> = {
 // body — see backend gating._apply_block_edit. The user can still delete
 // the section to skip it. Without this, a user editing the rendered text of
 // e.g. a tool_use block would silently see their changes dropped.
-const STRUCTURED_TYPES = new Set(["tool_def", "tool_call", "image"]);
+const STRUCTURED_TYPES = new Set(["tool_def", "tool_call", "image", "thinking"]);
 
 function languageFor(section: Section): string {
   // Tool calls are structured JSON. Tool outputs can be logs, source code, or

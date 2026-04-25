@@ -9,6 +9,7 @@ export type SectionType =
   | "tool_call"
   | "tool_output"
   | "image"
+  | "thinking"
   | "unknown";
 
 export interface Section {
