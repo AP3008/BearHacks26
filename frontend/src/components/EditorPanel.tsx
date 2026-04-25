@@ -2,21 +2,16 @@ import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { GemmaFlag, GemmaSuggestion, Section } from "../types";
+import type { GemmaFlag, Section } from "../types";
 import "./EditorPanel.css";
 
 interface Props {
   section: Section;
   content: string;
   gemmaFlag: GemmaFlag | undefined;
-  // Per-section suggestion fired on demand when this editor opens. Carries
-  // character-range highlights with their own per-range `reason` strings.
-  suggestion: GemmaSuggestion | undefined;
-  // True while we're waiting on a suggestion response. Drives the spinner.
-  // Without this prop, the spinner used to show whenever no flag existed,
-  // which lied to the user about Gemma "still analyzing" forever.
-  suggestionPending: boolean;
+  flaggingPending: boolean;
   gemmaAvailable: boolean;
+  onRequestFlagging: () => void;
   onSave: (text: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -173,9 +168,9 @@ export function EditorPanel({
   section,
   content,
   gemmaFlag,
-  suggestion,
-  suggestionPending,
+  flaggingPending,
   gemmaAvailable,
+  onRequestFlagging,
   onSave,
   onDelete,
   onClose,
@@ -222,17 +217,7 @@ export function EditorPanel({
     [],
   );
 
-  // Resolved highlight set: prefer the on-demand suggestion (richer, has a
-  // reason per range), fall back to whatever the broad-flagging pass found.
-  // Either way each highlight carries its own reason string for hover.
   const resolvedHighlights = useMemo<DecoratedHighlight[]>(() => {
-    if (suggestion && suggestion.highlights.length > 0) {
-      return suggestion.highlights.map((h) => ({
-        start: h.start,
-        end: h.end,
-        reason: h.reason || "Gemma suggests removing this.",
-      }));
-    }
     if (gemmaFlag && gemmaFlag.highlights.length > 0) {
       return gemmaFlag.highlights.map((h) => ({
         start: h.start,
@@ -241,7 +226,7 @@ export function EditorPanel({
       }));
     }
     return [];
-  }, [suggestion, gemmaFlag]);
+  }, [gemmaFlag]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -320,6 +305,29 @@ export function EditorPanel({
               structured · delete to skip
             </span>
           )}
+          <button
+            className="btn"
+            type="button"
+            onClick={onRequestFlagging}
+            disabled={
+              !gemmaAvailable ||
+              flaggingPending ||
+              ((gemmaFlag?.highlights?.length ?? 0) > 0)
+            }
+            title={
+              !gemmaAvailable
+                ? "Gemma offline"
+                : gemmaFlag
+                  ? (gemmaFlag.highlights.length > 0
+                      ? "Already flagged for this section"
+                      : "Analyze again")
+                  : flaggingPending
+                    ? "Analyzing…"
+                    : "Run flagging on this request"
+            }
+          >
+            Flag context
+          </button>
           <button className="btn danger" onClick={onDelete} type="button">
             Delete section
           </button>
@@ -329,44 +337,40 @@ export function EditorPanel({
         </div>
       </header>
       <div className="editor-body">
-        <Editor
-          height="100%"
-          language={language}
-          value={content}
-          onMount={handleMount}
-          onChange={onEditorChange}
-          theme="contextlens"
-          options={{
-            minimap: { enabled: false },
-            wordWrap: "on",
-            scrollBeyondLastLine: false,
-            fontSize: 13,
-            renderWhitespace: "selection",
-            scrollbar: {
-              verticalScrollbarSize: 10,
-              horizontalScrollbarSize: 10,
-            },
-            lineHeight: 19,
-            readOnly: STRUCTURED_TYPES.has(section.sectionType),
-          }}
-        />
-        {gemmaAvailable && suggestionPending && (
+        <div className="editor-split">
+          <div className="editor-main">
+            <Editor
+              height="100%"
+              language={language}
+              value={content}
+              onMount={handleMount}
+              onChange={onEditorChange}
+              theme="contextlens"
+              options={{
+                minimap: { enabled: false },
+                wordWrap: "on",
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+                renderWhitespace: "selection",
+                scrollbar: {
+                  verticalScrollbarSize: 10,
+                  horizontalScrollbarSize: 10,
+                },
+                lineHeight: 19,
+                readOnly: STRUCTURED_TYPES.has(section.sectionType),
+              }}
+            />
+          </div>
+        </div>
+        {gemmaAvailable && flaggingPending && (
           <div className="gemma-spinner" aria-hidden="true">
             <span className="spinner-dot" />
             <span>Gemma analyzing…</span>
           </div>
         )}
-        {gemmaAvailable &&
-          !suggestionPending &&
-          suggestion &&
-          suggestion.highlights.length === 0 && (
-            <div className="gemma-status gemma-status-clean" aria-hidden="true">
-              <span>Gemma found nothing to trim here.</span>
-            </div>
-          )}
         {!gemmaAvailable && (
           <div className="gemma-status gemma-status-offline" aria-hidden="true">
-            <span>Gemma offline — no suggestions.</span>
+            <span>Gemma offline — no flagging.</span>
           </div>
         )}
       </div>

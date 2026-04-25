@@ -1,39 +1,84 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from models import Section
 
 LARGE_SECTION_TOKENS = 2000
 
-FLAGGING_SYSTEM = """You are a context-window auditor for a coding assistant. You receive a JSON list of conversation sections (system prompt, user messages, assistant replies, tool calls, tool outputs). Identify sections that are redundant, stale, or safe to remove without losing important context.
+# Ollama `format` for strict flagging output (JSON Schema). Matches FLAGGING_SYSTEM shape.
+FLAGGING_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["flags"],
+    "properties": {
+        "flags": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["severity", "highlights"],
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                    },
+                    "highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["start", "end"],
+                            "properties": {
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"},
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    "additionalProperties": False,
+}
+
+FLAGGING_SYSTEM = """You are a context prompt reviewer for a prompt engineer. You recieve a section of text that is either a user prompt, assistant response, tool call or tool output. This section inputted to you is a part of a larger conversation.
+You will flag parts within the section that are redundant, stale, or safe to remove without losing important context.
+You will also flag things that are unrelated to coding.
+
+You will be loose on the flags, you may flag anything that shows a small amount of issue.
 
 Return ONLY valid JSON. The output MUST be an object with a single key "flags" whose value is an array. Each entry in the array MUST have this exact shape:
 {
-  "sectionIndex": <integer>,
   "severity": "high" | "medium" | "low",
-  "reason": "<short explanation>",
   "highlights": [{"start": <int>, "end": <int>}]
 }
 
 Rules:
-- Only flag sections that are clearly removable. Do not flag the most recent user message. Do not flag the system prompt.
 - "high" = clearly redundant or stale. "medium" = likely removable. "low" = possibly trimmable.
-- "highlights" character ranges are optional; use [] if you don't have specific ranges.
+- You will flag things that are deemed low, medium or high severity.
+- If prior_conversation_excerpts is present and closely matches spans in section_text, treat repetition as redundancy and flag those spans more aggressively.
 - If nothing is flaggable, return {"flags": []}."""
 
 
-SUGGESTION_SYSTEM = """You are a context-window auditor. You receive ONE section's full text plus the conversation goal. Identify specific character ranges within the section that can be removed without losing information needed for the goal.
+def format_gemma4_dialogue(*, system: str, user: str) -> str:
+    """Format a single-turn dialogue using Gemma 4 control tokens.
 
-Return ONLY valid JSON of the form:
-{
-  "highlights": [
-    {"start": <int>, "end": <int>, "reason": "<short explanation>"}
-  ]
-}
-
-Character offsets refer to the section text exactly as provided. If nothing is removable, return {"highlights": []}."""
+    Ref: https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4
+    """
+    # IMPORTANT: We keep system/user content as-is; the separation is enforced
+    # by Gemma's reserved control tokens.
+    return "\n".join(
+        [
+            "<|turn>system",
+            system.rstrip(),
+            "<turn|>",
+            "<|turn>user",
+            user.rstrip(),
+            "<turn|>",
+            "<|turn>model",
+        ]
+    )
 
 
 def _section_for_prompt(section: Section) -> dict[str, Any]:
@@ -48,18 +93,21 @@ def _section_for_prompt(section: Section) -> dict[str, Any]:
     return base
 
 
-def flagging_user(sections: list[Section]) -> str:
-    payload = [_section_for_prompt(s) for s in sections]
-    return json.dumps({"sections": payload}, ensure_ascii=False)
-
-
-def suggestion_user(section: Section, goal: str) -> str:
-    payload = {
-        "goal": goal,
-        "section": {
-            "index": section.index,
-            "sectionType": section.sectionType,
-            "rawContent": section.rawContent,
-        },
+def flagging_user(
+    sections: list[Section],
+    *,
+    prior_memories: Optional[list[dict[str, Any]]] = None,
+) -> str:
+    # JSON user payload: section text is a separate field so it is clearly data, not instructions.
+    if not sections:
+        return ""
+    section = sections[0]
+    payload: dict[str, Any] = {
+        "task": "Flag removable character ranges in section_text. Output only the JSON object required by the system message.",
+        "untrusted": True,
+        "section_type": section.sectionType,
+        "section_text": section.rawContent,
     }
+    if prior_memories:
+        payload["prior_conversation_excerpts"] = prior_memories[:8]
     return json.dumps(payload, ensure_ascii=False)

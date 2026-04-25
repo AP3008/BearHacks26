@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import copy
 import json
 import logging
 import time
@@ -14,7 +14,7 @@ import conversation_state
 import forwarder
 import gating
 import ws_manager
-from gemma import analyzer
+from backboard import ingest as bb_ingest
 from models import NewRequest, Section
 
 logger = logging.getLogger(__name__)
@@ -103,11 +103,60 @@ def _push_history(req: NewRequest) -> None:
         _history.pop(0)
 
 
+def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tuple[dict[str, Any], int]:
+    """Anthropic enforces a hard cap on the number of blocks containing
+    `cache_control` across the entire request. Some upstream clients (e.g. IDE
+    agents) can exceed this, which causes a 400.
+
+    We keep the first `max_blocks` occurrences (in a stable traversal order)
+    and remove `cache_control` from any additional blocks.
+    """
+
+    def _maybe_strip(block: Any, state: dict[str, int]) -> None:
+        if not isinstance(block, dict):
+            return
+        if "cache_control" not in block:
+            return
+        state["seen"] += 1
+        if state["seen"] <= max_blocks:
+            return
+        block.pop("cache_control", None)
+        state["stripped"] += 1
+
+    state = {"seen": 0, "stripped": 0}
+
+    # 1) system: may be string OR list[content_block]
+    system = body.get("system")
+    if isinstance(system, list):
+        for block in system:
+            _maybe_strip(block, state)
+
+    # 2) tools: list[tool_def]
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            _maybe_strip(tool, state)
+
+    # 3) messages: list[{role, content}], where content may be string OR list[content_block]
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    _maybe_strip(block, state)
+
+    return body, state["stripped"]
+
+
 async def handle(request: Request) -> Response:
     global _latest_request
 
     raw = await request.body()
     headers = dict(request.headers)
+    bb_ingest.set_user_key(headers.get("x-contextlens-user", "local"))
 
     try:
         body: dict[str, Any] = json.loads(raw)
@@ -135,11 +184,24 @@ async def handle(request: Request) -> Response:
     if not conversation_state.is_main_conversation(body):
         return await forwarder.forward_messages(body, headers)
 
+    request_id = uuid.uuid4().hex
+    pre_sync = copy.deepcopy(body)
+
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
     body = await conversation_state.sync(body)
 
-    request_id = uuid.uuid4().hex
+    # Safety: enforce Anthropic's cap on cache_control blocks. This prevents
+    # upstream 400s when the caller adds more than allowed.
+    body, stripped = _strip_excess_cache_control(body, max_blocks=4)
+    if stripped:
+        logger.warning(
+            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit",
+            stripped,
+        )
+
+    bb_ingest.schedule_raw_incoming(pre_sync, request_id)
+    bb_ingest.schedule_canonical_synced(copy.deepcopy(body), request_id)
     sections, total_tokens, total_cost, model = classifier.classify(body)
     _remember(request_id, sections)
 
@@ -183,7 +245,8 @@ async def handle(request: Request) -> Response:
         _held_requests.append(new_request)
 
     await ws_manager.send(new_request)
-    asyncio.create_task(analyzer.flag(request_id, sections))
+    # Gemma flagging runs on demand when requested by the UI (see
+    # RequestFlagging → analyzer.flag in main.py), not for every request.
 
     if must_hold:
         held = gating.register(request_id)
@@ -200,7 +263,9 @@ async def handle(request: Request) -> Response:
                     len(held.edited_sections),
                 )
                 body = await conversation_state.commit_edits(
-                    held.removed_indices, held.edited_sections
+                    held.removed_indices,
+                    held.edited_sections,
+                    request_id=request_id,
                 )
         finally:
             gating.release(request_id)
