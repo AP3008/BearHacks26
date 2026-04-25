@@ -119,6 +119,132 @@
   min-height: 0;
 }
 
+.editor-split {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+}
+
+.editor-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gemma-suggest-sidebar {
+  width: 280px;
+  flex: 0 0 280px;
+  border-left: 1px solid var(--cl-border);
+  background: var(--cl-bg-deep);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.gemma-suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cl-border);
+  background: var(--cl-surface);
+}
+
+.gemma-suggest-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cl-muted);
+}
+
+.gemma-suggest-count {
+  font-size: 12px;
+  color: var(--cl-text);
+  opacity: 0.8;
+  border: 1px solid var(--cl-border);
+  padding: 2px 6px;
+  border-radius: 1px;
+  background: var(--cl-bg);
+}
+
+.gemma-suggest-list {
+  overflow: auto;
+  padding: 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gemma-suggest-item {
+  border: 1px solid var(--cl-border);
+  background: rgba(10, 9, 8, 0.7);
+  border-radius: 1px;
+  padding: 9px 9px 10px;
+}
+
+.gemma-suggest-jump {
+  width: 100%;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--cl-text);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.gemma-suggest-jump:hover {
+  color: var(--cl-text);
+}
+
+.gemma-suggest-index {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #160d08;
+  background: rgba(242, 140, 69, 0.85);
+  border-radius: 1px;
+}
+
+.gemma-suggest-reason {
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.gemma-suggest-snippet {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--cl-muted);
+  opacity: 0.95;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gemma-suggest-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.gemma-suggest-btn {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 @media (max-width: 760px) {
   .editor-panel {
     border-left: none;
@@ -134,6 +260,10 @@
   .editor-head-right {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .gemma-suggest-sidebar {
+    display: none;
   }
 }
 

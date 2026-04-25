@@ -29,6 +29,14 @@ interface DecoratedHighlight {
   reason: string;
 }
 
+interface SidebarSuggestion {
+  id: string;
+  start: number;
+  end: number;
+  reason: string;
+  snippet: string;
+}
+
 const TYPE_LABEL: Record<string, string> = {
   system: "System prompt",
   tool_def: "Tool definition",
@@ -38,6 +46,16 @@ const TYPE_LABEL: Record<string, string> = {
   tool_output: "Tool output",
   unknown: "Unknown section",
 };
+
+function makeSnippet(text: string, start: number, end: number): string {
+  const s = Math.max(0, Math.min(start, text.length));
+  const e = Math.max(s, Math.min(end, text.length));
+  const before = text.slice(Math.max(0, s - 40), s);
+  const mid = text.slice(s, e);
+  const after = text.slice(e, Math.min(text.length, e + 40));
+  const clean = (v: string) => v.replace(/\s+/g, " ").trim();
+  return [clean(before), clean(mid), clean(after)].filter(Boolean).join(" ");
+}
 
 function languageFor(section: Section): string {
   // Tool calls are structured JSON. Tool outputs can be logs, source code, or
@@ -237,6 +255,63 @@ export function EditorPanel({
     return [];
   }, [suggestion, gemmaFlag]);
 
+  const sidebarSuggestions = useMemo<SidebarSuggestion[]>(() => {
+    if (!suggestion || suggestion.highlights.length === 0) return [];
+    return suggestion.highlights.map((h, i) => ({
+      id: `${suggestion.requestId}:${suggestion.sectionIndex}:${i}:${h.start}-${h.end}`,
+      start: h.start,
+      end: h.end,
+      reason: h.reason || "Gemma suggests removing this.",
+      snippet: makeSnippet(content, h.start, h.end),
+    }));
+  }, [suggestion, content]);
+
+  const handleJumpToSuggestion = useCallback((s: SidebarSuggestion) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const start = Math.max(0, Math.min(s.start, model.getValueLength()));
+    const end = Math.max(start, Math.min(s.end, model.getValueLength()));
+    const startPos = model.getPositionAt(start);
+    const endPos = model.getPositionAt(end);
+    const range = new monaco.Range(
+      startPos.lineNumber,
+      startPos.column,
+      endPos.lineNumber,
+      endPos.column,
+    );
+    editor.revealRangeInCenter(range, monaco.editor.ScrollType.Smooth);
+    editor.setSelection(range);
+    editor.focus();
+  }, []);
+
+  const handleAcceptSuggestion = useCallback((s: SidebarSuggestion) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const start = Math.max(0, Math.min(s.start, model.getValueLength()));
+    const end = Math.max(start, Math.min(s.end, model.getValueLength()));
+    const startPos = model.getPositionAt(start);
+    const endPos = model.getPositionAt(end);
+    editor.executeEdits("gemma-accept", [
+      {
+        range: new monaco.Range(
+          startPos.lineNumber,
+          startPos.column,
+          endPos.lineNumber,
+          endPos.column,
+        ),
+        text: "",
+        forceMoveMarkers: true,
+      },
+    ]);
+    editor.focus();
+  }, []);
+
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
@@ -318,12 +393,18 @@ export function EditorPanel({
             className="btn"
             type="button"
             onClick={onRequestSuggestions}
-            disabled={!gemmaAvailable || suggestionPending || !!suggestion}
+            disabled={
+              !gemmaAvailable ||
+              suggestionPending ||
+              ((suggestion?.highlights?.length ?? 0) > 0)
+            }
             title={
               !gemmaAvailable
                 ? "Gemma offline"
                 : suggestion
-                  ? "Already analyzed for this section"
+                  ? (suggestion.highlights.length > 0
+                      ? "Already analyzed for this section"
+                      : "Analyze again")
                   : suggestionPending
                     ? "Analyzing…"
                     : "Get trim suggestions for this section"
@@ -340,41 +421,71 @@ export function EditorPanel({
         </div>
       </header>
       <div className="editor-body">
-        <Editor
-          height="100%"
-          language={language}
-          value={content}
-          onMount={handleMount}
-          onChange={onEditorChange}
-          theme="contextlens"
-          options={{
-            minimap: { enabled: false },
-            wordWrap: "on",
-            scrollBeyondLastLine: false,
-            fontSize: 13,
-            renderWhitespace: "selection",
-            scrollbar: {
-              verticalScrollbarSize: 10,
-              horizontalScrollbarSize: 10,
-            },
-            lineHeight: 19,
-            readOnly: section.sectionType === "tool_def",
-          }}
-        />
+        <div className="editor-split">
+          <div className="editor-main">
+            <Editor
+              height="100%"
+              language={language}
+              value={content}
+              onMount={handleMount}
+              onChange={onEditorChange}
+              theme="contextlens"
+              options={{
+                minimap: { enabled: false },
+                wordWrap: "on",
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+                renderWhitespace: "selection",
+                scrollbar: {
+                  verticalScrollbarSize: 10,
+                  horizontalScrollbarSize: 10,
+                },
+                lineHeight: 19,
+                readOnly: section.sectionType === "tool_def",
+              }}
+            />
+          </div>
+          {gemmaAvailable && sidebarSuggestions.length > 0 && (
+            <aside className="gemma-suggest-sidebar" aria-label="Gemma suggestions">
+              <div className="gemma-suggest-head">
+                <span className="gemma-suggest-title">Suggestions</span>
+                <span className="gemma-suggest-count">{sidebarSuggestions.length}</span>
+              </div>
+              <div className="gemma-suggest-list">
+                {sidebarSuggestions.map((s, idx) => (
+                  <div key={s.id} className="gemma-suggest-item">
+                    <button
+                      type="button"
+                      className="gemma-suggest-jump"
+                      onClick={() => handleJumpToSuggestion(s)}
+                      title="Jump to highlighted text"
+                    >
+                      <span className="gemma-suggest-index">{idx + 1}</span>
+                      <span className="gemma-suggest-reason">{s.reason}</span>
+                    </button>
+                    <div className="gemma-suggest-snippet">{s.snippet}</div>
+                    <div className="gemma-suggest-actions">
+                      <button
+                        type="button"
+                        className="btn gemma-suggest-btn"
+                        onClick={() => handleAcceptSuggestion(s)}
+                        title="Remove this range"
+                      >
+                        Accept
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          )}
+        </div>
         {gemmaAvailable && suggestionPending && (
           <div className="gemma-spinner" aria-hidden="true">
             <span className="spinner-dot" />
             <span>Gemma analyzing…</span>
           </div>
         )}
-        {gemmaAvailable &&
-          !suggestionPending &&
-          suggestion &&
-          suggestion.highlights.length === 0 && (
-            <div className="gemma-status gemma-status-clean" aria-hidden="true">
-              <span>Gemma found nothing to trim here.</span>
-            </div>
-          )}
         {!gemmaAvailable && (
           <div className="gemma-status gemma-status-offline" aria-hidden="true">
             <span>Gemma offline — no suggestions.</span>

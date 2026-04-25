@@ -539,7 +539,8 @@ export default function App() {
     if (!editorSection || !state.currentRequest) return;
     if (!state.gemmaAvailable) return;
     const idx = editorSection.index;
-    if (state.gemmaSuggestionsByIndex[idx]) return;
+    const existing = state.gemmaSuggestionsByIndex[idx];
+    if (existing && existing.highlights.length > 0) return;
     if (state.pendingSuggestionIndices.has(idx)) return;
     dispatch({ type: "request_suggestion_pending", index: idx });
     senders.sendRequestSuggestion(state.currentRequest.requestId, idx);
