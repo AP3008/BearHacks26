@@ -9,10 +9,10 @@ import httpx
 
 import gating
 import ws_manager
-from models import GemmaFlags, GemmaSuggestion, Section
+from models import GemmaFlags, Section
 
 from . import prompts
-from .parser import parse_flags, parse_suggestion
+from .parser import parse_flags
 
 logger = logging.getLogger(__name__)
 
@@ -196,78 +196,25 @@ async def flag(request_id: str, sections: list[Section]) -> None:
         logger.exception("gemma: flag task crashed")
 
 
-async def suggest(request_id: str, section_index: int, sections: list[Section]) -> None:
+async def flag_for_section(request_id: str, section: Section) -> None:
     if not _available:
         return
-    try:
-        section = next((s for s in sections if s.index == section_index), None)
-        if section is None:
-            return
-        goal = ""
-        for s in sections:
-            if s.sectionType == "user":
-                goal = s.rawContent
-                break
-        await suggest_for_section(request_id=request_id, section=section, goal=goal)
-    except Exception:
-        logger.exception("gemma: suggest task crashed")
-
-
-async def suggest_for_section(request_id: str, section: Section, goal: str) -> None:
-    """Run Gemma only on the user-selected section.
-
-    Callers should pass the specific `Section` the user chose (and an optional
-    goal string) so we never accidentally ship the full request context into
-    the model."""
-    if not _available:
-        return
-    # Never run suggestions on system prompts or tool definitions.
-    if section.sectionType in ("system", "tool_def"):
-        try:
-            await ws_manager.send(
-                GemmaSuggestion(
-                    requestId=request_id,
-                    sectionIndex=section.index,
-                    highlights=[],
-                )
-            )
-        except Exception:
-            logger.exception("gemma: failed to send suggestion websocket message")
-        return
-    highlights = []
-    raw = None
     try:
         await _wait_for_idle()
-        user = prompts.suggestion_user(section, goal)
-        raw = await _chat(prompts.SUGGESTION_SYSTEM, user)
+        user = prompts.flagging_user([section])
+        raw = await _chat(prompts.FLAGGING_SYSTEM, user)
         if raw is None:
             return
-        highlights = parse_suggestion(raw)
-        logger.info(
-            "gemma: suggestion ok request_id=%s index=%s highlights=%d raw=%s",
-            request_id,
-            section.index,
-            len(highlights),
-            raw,
-        )
-    except asyncio.TimeoutError:
-        logger.warning("gemma: suggestion timed out request_id=%s index=%s", request_id, section.index)
+        flags = parse_flags(raw, default_section_index=section.index)
+        if not flags:
+            return
+        # UI expects one flag per section index. Collapse into a single entry.
+        severity_rank = {"low": 0, "medium": 1, "high": 2}
+        top = max(flags, key=lambda f: severity_rank.get(f.severity, 0))
+        highlights = []
+        for f in flags:
+            highlights.extend(f.highlights or [])
+        collapsed = top.model_copy(update={"highlights": highlights})
+        await ws_manager.send(GemmaFlags(requestId=request_id, flags=[collapsed]))
     except Exception:
-        logger.exception("gemma: suggest_for_section task crashed")
-    finally:
-        # Always respond so the UI can clear its pending spinner.
-        if raw is not None and highlights == []:
-            # Useful when the model returned something unparsable: the parser logs
-            # a payload preview, but keeping a full copy here helps debugging.
-            logger.info("gemma: suggestion raw (no highlights) request_id=%s index=%s raw=%s",
-                        request_id, section.index, raw)
-        try:
-            await ws_manager.send(
-                GemmaSuggestion(
-                    requestId=request_id,
-                    sectionIndex=section.index,
-                    highlights=highlights,
-                )
-            )
-        except Exception:
-            logger.exception("gemma: failed to send suggestion websocket message")
+        logger.exception("gemma: flag_for_section task crashed")

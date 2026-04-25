@@ -22,7 +22,7 @@ from models import (
     InboundMessage,
     ModeChange,
     PauseToggle,
-    RequestSuggestion,
+    RequestFlagging,
     ResetCanonical,
     Snapshot,
 )
@@ -89,19 +89,14 @@ async def _dispatch(msg: InboundMessage) -> None:
         gating.set_mode(msg.mode)
     elif isinstance(msg, PauseToggle):
         gating.set_pause(msg.paused)
-    elif isinstance(msg, RequestSuggestion):
+    elif isinstance(msg, RequestFlagging):
         sections = interceptor.recent_sections.get(msg.requestId, [])
+        if not sections:
+            return
         section = next((s for s in sections if s.index == msg.sectionIndex), None)
         if section is None:
             return
-        goal = ""
-        for s in sections:
-            if s.sectionType == "user":
-                goal = s.rawContent
-                break
-        asyncio.create_task(
-            analyzer.suggest_for_section(request_id=msg.requestId, section=section, goal=goal)
-        )
+        asyncio.create_task(analyzer.flag_for_section(request_id=msg.requestId, section=section))
     elif isinstance(msg, ResetCanonical):
         await conversation_state.reset()
 

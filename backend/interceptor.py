@@ -219,9 +219,8 @@ async def handle(request: Request) -> Response:
         _held_request = new_request
 
     await ws_manager.send(new_request)
-    # Gemma analysis runs on demand when the user opens a section (see
-    # RequestSuggestion → analyzer.suggest in main.py), not for every section
-    # at request creation.
+    # Gemma flagging runs on demand when requested by the UI (see
+    # RequestFlagging → analyzer.flag in main.py), not for every request.
 
     if must_hold:
         held = gating.register(request_id)

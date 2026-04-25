@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from models import GemmaFlag, Highlight, SuggestionHighlight
+from models import GemmaFlag, Highlight
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def _parse_highlights(raw: Any) -> list[Highlight]:
     return out
 
 
-def parse_flags(raw: str) -> list[GemmaFlag]:
+def parse_flags(raw: str, *, default_section_index: int | None = None) -> list[GemmaFlag]:
     payload = _extract_json_payload(raw)
     try:
         data = json.loads(payload)
@@ -118,9 +118,13 @@ def parse_flags(raw: str) -> list[GemmaFlag]:
         if not isinstance(entry, dict):
             continue
         idx = _coerce_int(entry.get("sectionIndex"))
+        if idx is None and default_section_index is not None:
+            idx = default_section_index
         severity = entry.get("severity")
         reason = entry.get("reason")
-        if idx is None or severity not in _VALID_SEVERITY or not isinstance(reason, str):
+        if not isinstance(reason, str):
+            reason = "Flagged as removable context."
+        if idx is None or severity not in _VALID_SEVERITY:
             continue
         flags.append(
             GemmaFlag(
@@ -131,32 +135,3 @@ def parse_flags(raw: str) -> list[GemmaFlag]:
             )
         )
     return flags
-
-
-def parse_suggestion(raw: str) -> list[SuggestionHighlight]:
-    payload = _extract_json_payload(raw)
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
-        preview = payload.strip().replace("\n", "\\n")[:400]
-        logger.warning("gemma: malformed suggestion JSON payload=%s", preview)
-        return []
-
-    if isinstance(data, dict) and isinstance(data.get("highlights"), list):
-        entries = data["highlights"]
-    elif isinstance(data, list):
-        entries = data
-    else:
-        return []
-
-    out: list[SuggestionHighlight] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        start = _coerce_int(entry.get("start"))
-        end = _coerce_int(entry.get("end"))
-        reason = entry.get("reason", "")
-        if start is None or end is None or not isinstance(reason, str):
-            continue
-        out.append(SuggestionHighlight(start=start, end=end, reason=reason))
-    return out

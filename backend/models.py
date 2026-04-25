@@ -64,19 +64,6 @@ class GemmaFlags(BaseModel):
     flags: list[GemmaFlag]
 
 
-class SuggestionHighlight(BaseModel):
-    start: int
-    end: int
-    reason: str
-
-
-class GemmaSuggestion(BaseModel):
-    type: Literal["gemma_suggestion"] = "gemma_suggestion"
-    requestId: str
-    sectionIndex: int
-    highlights: list[SuggestionHighlight]
-
-
 class TimeoutWarning(BaseModel):
     type: Literal["timeout_warning"] = "timeout_warning"
     requestId: str
@@ -137,8 +124,8 @@ class PauseToggle(BaseModel):
     paused: bool
 
 
-class RequestSuggestion(BaseModel):
-    type: Literal["request_suggestion"]
+class RequestFlagging(BaseModel):
+    type: Literal["request_flagging"]
     requestId: str
     sectionIndex: int
 
@@ -154,7 +141,7 @@ InboundMessage = Annotated[
         Cancel,
         ModeChange,
         PauseToggle,
-        RequestSuggestion,
+        RequestFlagging,
         ResetCanonical,
     ],
     Field(discriminator="type"),

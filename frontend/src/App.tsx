@@ -12,7 +12,6 @@ import type {
   EditedSection,
   GemmaFlag,
   GemmaFlags,
-  GemmaSuggestion,
   Mode,
   NewRequest,
   Section,
@@ -38,13 +37,7 @@ interface AppState {
   // back-to-back rapid prompts silently displacing one another.
   pendingQueue: NewRequest[];
   gemmaFlagsByIndex: Record<number, GemmaFlag>;
-  // On-demand per-section suggestions, requested via the editor "Suggestions"
-  // button (FR-6.6 / FR-8.6). Keyed by section index; reset on new request.
-  gemmaSuggestionsByIndex: Record<number, GemmaSuggestion>;
-  // Section indices we've asked Gemma about and haven't gotten a reply for.
-  // Drives the "Gemma analyzing…" spinner — without this, the spinner used
-  // to show whenever no flag existed (forever, for clean sections).
-  pendingSuggestionIndices: Set<number>;
+  isFlaggingPending: boolean;
   removedIndices: Set<number>;
   editedSections: Map<number, string>;
   editorOpenForIndex: number | null;
@@ -56,8 +49,7 @@ type Action =
   | { type: "new_request"; msg: NewRequest }
   | { type: "snapshot"; msg: Snapshot }
   | { type: "gemma_flags"; msg: GemmaFlags }
-  | { type: "gemma_suggestion"; msg: GemmaSuggestion }
-  | { type: "request_suggestion_pending"; index: number }
+  | { type: "request_flagging_pending" }
   | { type: "gemma_unavailable" }
   | { type: "mode_change"; mode: Mode }
   | { type: "pause_toggle"; paused: boolean }
@@ -113,8 +105,7 @@ function reducer(state: AppState, action: Action): AppState {
           next.currentRequest = buildCurrentRequest(incoming, isHeld);
           if (isTopLevel) {
             next.gemmaFlagsByIndex = {};
-            next.gemmaSuggestionsByIndex = {};
-            next.pendingSuggestionIndices = new Set();
+            next.isFlaggingPending = false;
             next.removedIndices = new Set();
             next.editedSections = new Map();
             next.editorOpenForIndex = null;
@@ -159,8 +150,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         currentRequest: buildCurrentRequest(msg, isHeld),
         gemmaFlagsByIndex: {},
-        gemmaSuggestionsByIndex: {},
-        pendingSuggestionIndices: new Set(),
+        isFlaggingPending: false,
         removedIndices: new Set(),
         editedSections: new Map(),
         editorOpenForIndex: null,
@@ -175,34 +165,11 @@ function reducer(state: AppState, action: Action): AppState {
       }
       const next = { ...state.gemmaFlagsByIndex };
       for (const flag of action.msg.flags) next[flag.sectionIndex] = flag;
-      return { ...state, gemmaFlagsByIndex: next };
+      return { ...state, gemmaFlagsByIndex: next, isFlaggingPending: false };
     }
-    case "gemma_suggestion": {
-      // Drop late-arriving suggestions for requests we no longer view —
-      // their highlights are character-offset into stale `rawContent`.
-      if (
-        !state.currentRequest ||
-        state.currentRequest.requestId !== action.msg.requestId
-      ) {
-        return state;
-      }
-      const nextSugg = {
-        ...state.gemmaSuggestionsByIndex,
-        [action.msg.sectionIndex]: action.msg,
-      };
-      const nextPending = new Set(state.pendingSuggestionIndices);
-      nextPending.delete(action.msg.sectionIndex);
-      return {
-        ...state,
-        gemmaSuggestionsByIndex: nextSugg,
-        pendingSuggestionIndices: nextPending,
-      };
-    }
-    case "request_suggestion_pending": {
-      if (state.pendingSuggestionIndices.has(action.index)) return state;
-      const next = new Set(state.pendingSuggestionIndices);
-      next.add(action.index);
-      return { ...state, pendingSuggestionIndices: next };
+    case "request_flagging_pending": {
+      if (state.isFlaggingPending) return state;
+      return { ...state, isFlaggingPending: true };
     }
     case "gemma_unavailable":
       return { ...state, gemmaUnavailableNoticeShown: true };
@@ -246,8 +213,7 @@ function reducer(state: AppState, action: Action): AppState {
           currentRequest: buildCurrentRequest(next, isHeld),
           pendingQueue: rest,
           gemmaFlagsByIndex: {},
-          gemmaSuggestionsByIndex: {},
-          pendingSuggestionIndices: new Set(),
+          isFlaggingPending: false,
           removedIndices: new Set(),
           editedSections: new Map(),
           editorOpenForIndex: null,
@@ -274,8 +240,7 @@ function loadInitialState(): AppState {
     currentRequest: null,
     pendingQueue: [],
     gemmaFlagsByIndex: {},
-    gemmaSuggestionsByIndex: {},
-    pendingSuggestionIndices: new Set(),
+    isFlaggingPending: false,
     removedIndices: new Set(),
     editedSections: new Map(),
     editorOpenForIndex: null,
@@ -335,8 +300,6 @@ export default function App() {
       }
     },
     onGemmaFlags: (msg: GemmaFlags) => dispatch({ type: "gemma_flags", msg }),
-    onGemmaSuggestion: (msg: GemmaSuggestion) =>
-      dispatch({ type: "gemma_suggestion", msg }),
     onGemmaUnavailable: () => dispatch({ type: "gemma_unavailable" }),
     onSnapshot: (msg: Snapshot) => {
       const cur = stateRef.current;
@@ -535,30 +498,20 @@ export default function App() {
     return state.editedSections.get(editorSection.index) ?? editorSection.rawContent;
   }, [editorSection, state.editedSections]);
 
-  const requestEditorSuggestions = useCallback(() => {
-    if (!editorSection || !state.currentRequest) return;
+  const requestFlagging = useCallback(() => {
+    const cr = state.currentRequest;
+    if (!cr || !editorSection) return;
     if (!state.gemmaAvailable) return;
-    const idx = editorSection.index;
-    const existing = state.gemmaSuggestionsByIndex[idx];
-    if (existing && existing.highlights.length > 0) return;
-    if (state.pendingSuggestionIndices.has(idx)) return;
-    dispatch({ type: "request_suggestion_pending", index: idx });
-    senders.sendRequestSuggestion(state.currentRequest.requestId, idx);
+    if (state.isFlaggingPending) return;
+    dispatch({ type: "request_flagging_pending" });
+    senders.sendRequestFlagging(cr.requestId, editorSection.index);
   }, [
-    editorSection,
     state.currentRequest,
+    editorSection,
     state.gemmaAvailable,
-    state.gemmaSuggestionsByIndex,
-    state.pendingSuggestionIndices,
+    state.isFlaggingPending,
     senders,
   ]);
-
-  const editorSuggestion = editorSection
-    ? state.gemmaSuggestionsByIndex[editorSection.index]
-    : undefined;
-  const editorSuggestionPending = editorSection
-    ? state.pendingSuggestionIndices.has(editorSection.index)
-    : false;
 
   const totalTokens = useMemo(() => {
     const cr = state.currentRequest;
@@ -635,10 +588,9 @@ export default function App() {
               section={editorSection}
               content={editorContent}
               gemmaFlag={state.gemmaFlagsByIndex[editorSection.index]}
-              suggestion={editorSuggestion}
-              suggestionPending={editorSuggestionPending}
+              flaggingPending={state.isFlaggingPending}
               gemmaAvailable={state.gemmaAvailable}
-              onRequestSuggestions={requestEditorSuggestions}
+              onRequestFlagging={requestFlagging}
               onSave={(text) => onEditSection(editorSection.index, text)}
               onDelete={() => onDeleteFromEditor(editorSection.index)}
               onClose={() => dispatch({ type: "close_editor" })}

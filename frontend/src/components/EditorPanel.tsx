@@ -1,23 +1,17 @@
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
 import { motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GemmaFlag, GemmaSuggestion, Section } from "../types";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { GemmaFlag, Section } from "../types";
 import "./EditorPanel.css";
 
 interface Props {
   section: Section;
   content: string;
   gemmaFlag: GemmaFlag | undefined;
-  // Per-section suggestion from Gemma when the user clicks Suggestions. Carries
-  // character-range highlights with their own per-range `reason` strings.
-  suggestion: GemmaSuggestion | undefined;
-  // True while we're waiting on a suggestion response. Drives the spinner.
-  // Without this prop, the spinner used to show whenever no flag existed,
-  // which lied to the user about Gemma "still analyzing" forever.
-  suggestionPending: boolean;
+  flaggingPending: boolean;
   gemmaAvailable: boolean;
-  onRequestSuggestions: () => void;
+  onRequestFlagging: () => void;
   onSave: (text: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -29,15 +23,6 @@ interface DecoratedHighlight {
   reason: string;
 }
 
-interface SidebarSuggestion {
-  id: string;
-  start: number;
-  end: number;
-  reason: string;
-  snippet: string;
-  highlightedText: string;
-}
-
 const TYPE_LABEL: Record<string, string> = {
   system: "System prompt",
   tool_def: "Tool definition",
@@ -47,16 +32,6 @@ const TYPE_LABEL: Record<string, string> = {
   tool_output: "Tool output",
   unknown: "Unknown section",
 };
-
-function makeSnippet(text: string, start: number, end: number): string {
-  const s = Math.max(0, Math.min(start, text.length));
-  const e = Math.max(s, Math.min(end, text.length));
-  const before = text.slice(Math.max(0, s - 40), s);
-  const mid = text.slice(s, e);
-  const after = text.slice(e, Math.min(text.length, e + 40));
-  const clean = (v: string) => v.replace(/\s+/g, " ").trim();
-  return [clean(before), clean(mid), clean(after)].filter(Boolean).join(" ");
-}
 
 function languageFor(section: Section): string {
   // Tool calls are structured JSON. Tool outputs can be logs, source code, or
@@ -185,10 +160,9 @@ export function EditorPanel({
   section,
   content,
   gemmaFlag,
-  suggestion,
-  suggestionPending,
+  flaggingPending,
   gemmaAvailable,
-  onRequestSuggestions,
+  onRequestFlagging,
   onSave,
   onDelete,
   onClose,
@@ -235,17 +209,7 @@ export function EditorPanel({
     [],
   );
 
-  // Resolved highlight set: prefer the on-demand suggestion (richer, has a
-  // reason per range), fall back to whatever the broad-flagging pass found.
-  // Either way each highlight carries its own reason string for hover.
   const resolvedHighlights = useMemo<DecoratedHighlight[]>(() => {
-    if (suggestion && suggestion.highlights.length > 0) {
-      return suggestion.highlights.map((h) => ({
-        start: h.start,
-        end: h.end,
-        reason: h.reason || "Gemma suggests removing this.",
-      }));
-    }
     if (gemmaFlag && gemmaFlag.highlights.length > 0) {
       return gemmaFlag.highlights.map((h) => ({
         start: h.start,
@@ -254,86 +218,7 @@ export function EditorPanel({
       }));
     }
     return [];
-  }, [suggestion, gemmaFlag]);
-
-  const sidebarSuggestions = useMemo<SidebarSuggestion[]>(() => {
-    if (!suggestion || suggestion.highlights.length === 0) return [];
-    return suggestion.highlights.map((h, i) => ({
-      id: `${suggestion.requestId}:${suggestion.sectionIndex}:${i}:${h.start}-${h.end}`,
-      start: h.start,
-      end: h.end,
-      reason: h.reason || "Gemma suggests removing this.",
-      snippet: makeSnippet(content, h.start, h.end),
-      highlightedText: content.slice(
-        Math.max(0, Math.min(h.start, content.length)),
-        Math.max(0, Math.min(h.end, content.length)),
-      ),
-    }));
-  }, [suggestion, content]);
-
-  const [replacementById, setReplacementById] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (sidebarSuggestions.length === 0) return;
-    setReplacementById((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const s of sidebarSuggestions) {
-        if (next[s.id] == null) {
-          next[s.id] = "";
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [sidebarSuggestions]);
-
-  const handleJumpToSuggestion = useCallback((s: SidebarSuggestion) => {
-    const editor = editorRef.current;
-    const monaco = monacoRef.current;
-    if (!editor || !monaco) return;
-    const model = editor.getModel();
-    if (!model) return;
-    const start = Math.max(0, Math.min(s.start, model.getValueLength()));
-    const end = Math.max(start, Math.min(s.end, model.getValueLength()));
-    const startPos = model.getPositionAt(start);
-    const endPos = model.getPositionAt(end);
-    const range = new monaco.Range(
-      startPos.lineNumber,
-      startPos.column,
-      endPos.lineNumber,
-      endPos.column,
-    );
-    editor.revealRangeInCenter(range, monaco.editor.ScrollType.Smooth);
-    editor.setSelection(range);
-    editor.focus();
-  }, []);
-
-  const handleAcceptSuggestion = useCallback((s: SidebarSuggestion) => {
-    const editor = editorRef.current;
-    const monaco = monacoRef.current;
-    if (!editor || !monaco) return;
-    const model = editor.getModel();
-    if (!model) return;
-    const start = Math.max(0, Math.min(s.start, model.getValueLength()));
-    const end = Math.max(start, Math.min(s.end, model.getValueLength()));
-    const startPos = model.getPositionAt(start);
-    const endPos = model.getPositionAt(end);
-    const replacement = replacementById[s.id] ?? "";
-    editor.executeEdits("gemma-accept", [
-      {
-        range: new monaco.Range(
-          startPos.lineNumber,
-          startPos.column,
-          endPos.lineNumber,
-          endPos.column,
-        ),
-        text: replacement,
-        forceMoveMarkers: true,
-      },
-    ]);
-    editor.focus();
-  }, [replacementById]);
+  }, [gemmaFlag]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -415,25 +300,25 @@ export function EditorPanel({
           <button
             className="btn"
             type="button"
-            onClick={onRequestSuggestions}
+            onClick={onRequestFlagging}
             disabled={
               !gemmaAvailable ||
-              suggestionPending ||
-              ((suggestion?.highlights?.length ?? 0) > 0)
+              flaggingPending ||
+              ((gemmaFlag?.highlights?.length ?? 0) > 0)
             }
             title={
               !gemmaAvailable
                 ? "Gemma offline"
-                : suggestion
-                  ? (suggestion.highlights.length > 0
-                      ? "Already analyzed for this section"
+                : gemmaFlag
+                  ? (gemmaFlag.highlights.length > 0
+                      ? "Already flagged for this section"
                       : "Analyze again")
-                  : suggestionPending
+                  : flaggingPending
                     ? "Analyzing…"
-                    : "Get trim suggestions for this section"
+                    : "Run flagging on this request"
             }
           >
-            Suggestions
+            Flag context
           </button>
           <button className="btn danger" onClick={onDelete} type="button">
             Delete section
@@ -468,70 +353,8 @@ export function EditorPanel({
               }}
             />
           </div>
-          {gemmaAvailable && sidebarSuggestions.length > 0 && (
-            <aside className="gemma-suggest-sidebar" aria-label="Gemma suggestions">
-              <div className="gemma-suggest-head">
-                <span className="gemma-suggest-title">Suggestions</span>
-                <span className="gemma-suggest-count">{sidebarSuggestions.length}</span>
-              </div>
-              <div className="gemma-suggest-list">
-                {sidebarSuggestions.map((s, idx) => (
-                  <div key={s.id} className="gemma-suggest-item">
-                    <button
-                      type="button"
-                      className="gemma-suggest-jump"
-                      onClick={() => handleJumpToSuggestion(s)}
-                      title="Jump to highlighted text"
-                    >
-                      <span className="gemma-suggest-index">{idx + 1}</span>
-                      <span className="gemma-suggest-reason">{s.reason}</span>
-                    </button>
-                    <div className="gemma-suggest-block">
-                      <div className="gemma-suggest-label">Text highlighted</div>
-                      <pre className="gemma-suggest-code">
-                        {s.highlightedText || "(empty)"}
-                      </pre>
-                    </div>
-
-                    <div className="gemma-suggest-block">
-                      <div className="gemma-suggest-label">Replaced text</div>
-                      <textarea
-                        className="gemma-suggest-replace"
-                        value={replacementById[s.id] ?? ""}
-                        onChange={(e) =>
-                          setReplacementById((prev) => ({
-                            ...prev,
-                            [s.id]: e.target.value,
-                          }))
-                        }
-                        placeholder="Leave empty to delete this highlighted range"
-                        rows={2}
-                      />
-                    </div>
-
-                    <details className="gemma-suggest-reasoning">
-                      <summary>Reasoning</summary>
-                      <div className="gemma-suggest-reasoning-body">{s.reason}</div>
-                    </details>
-
-                    <div className="gemma-suggest-snippet">{s.snippet}</div>
-                    <div className="gemma-suggest-actions">
-                      <button
-                        type="button"
-                        className="btn gemma-suggest-btn"
-                        onClick={() => handleAcceptSuggestion(s)}
-                        title="Apply replacement"
-                      >
-                        Accept
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </aside>
-          )}
         </div>
-        {gemmaAvailable && suggestionPending && (
+        {gemmaAvailable && flaggingPending && (
           <div className="gemma-spinner" aria-hidden="true">
             <span className="spinner-dot" />
             <span>Gemma analyzing…</span>
@@ -539,7 +362,7 @@ export function EditorPanel({
         )}
         {!gemmaAvailable && (
           <div className="gemma-status gemma-status-offline" aria-hidden="true">
-            <span>Gemma offline — no suggestions.</span>
+            <span>Gemma offline — no flagging.</span>
           </div>
         )}
       </div>
