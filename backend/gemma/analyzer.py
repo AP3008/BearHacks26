@@ -106,8 +106,56 @@ async def _chat(system: str, user: str) -> Optional[str]:
         return None
     msg = resp.get("message") if isinstance(resp, dict) else getattr(resp, "message", None)
     if isinstance(msg, dict):
-        return msg.get("content")
-    return getattr(msg, "content", None)
+        content = msg.get("content")
+        thinking = msg.get("thinking")
+    else:
+        content = getattr(msg, "content", None)
+        thinking = getattr(msg, "thinking", None)
+
+    if isinstance(content, str):
+        if content.strip():
+            return content
+        # Some Ollama/model combinations populate `thinking` instead of `content`.
+        # Fall back so we can still parse JSON from the actual text.
+        if isinstance(thinking, str) and thinking.strip():
+            logger.info(
+                "gemma: using thinking as content (model=%s host=%s)",
+                _model,
+                _host,
+            )
+            return thinking
+        try:
+            keys = list(resp.keys()) if isinstance(resp, dict) else []
+        except Exception:
+            keys = []
+        logger.warning(
+            "gemma: empty chat content (model=%s host=%s resp_keys=%s msg=%r)",
+            _model,
+            _host,
+            keys,
+            msg,
+        )
+        return None
+
+    if content is None:
+        if isinstance(thinking, str) and thinking.strip():
+            logger.info(
+                "gemma: using thinking as content (model=%s host=%s)",
+                _model,
+                _host,
+            )
+            return thinking
+        return None
+
+    # Unexpected non-string content; log and treat as failure.
+    logger.warning(
+        "gemma: non-string chat content (model=%s host=%s type=%s value=%r)",
+        _model,
+        _host,
+        type(content).__name__,
+        content,
+    )
+    return None
 
 
 async def flag(request_id: str, sections: list[Section]) -> None:
