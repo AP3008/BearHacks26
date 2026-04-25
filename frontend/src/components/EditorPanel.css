@@ -1,0 +1,187 @@
+.editor-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: clamp(520px, 48%, 860px);
+  background: var(--cl-bg);
+  border-left: 1px solid var(--cl-border);
+  display: flex;
+  flex-direction: column;
+  animation: slide-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  z-index: 10;
+  min-height: 0;
+}
+
+@keyframes slide-in {
+  from { transform: translateX(8%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--cl-border);
+  background: var(--cl-surface);
+}
+
+.editor-head-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.editor-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.type-badge {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 1px;
+  color: #160d08;
+  white-space: nowrap;
+}
+.type-badge.type-system { background: var(--cl-color-system); }
+.type-badge.type-user { background: var(--cl-color-user); color: #160d08; }
+.type-badge.type-assistant { background: var(--cl-color-assistant); color: #160d08; }
+.type-badge.type-tool_call { background: var(--cl-color-tool_call); color: #1a1100; }
+.type-badge.type-tool_output { background: var(--cl-color-tool_output); color: #fff0e8; }
+.type-badge.type-unknown {
+  background: transparent;
+  border: 1px solid var(--cl-color-unknown);
+  color: var(--cl-color-unknown);
+}
+
+.editor-head .muted {
+  color: var(--cl-muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.editor-head .estimate {
+  opacity: 0.55;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--cl-border);
+  background: var(--cl-bg-deep);
+  color: var(--cl-text);
+  padding: 9px 15px;
+  border-radius: 1px;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
+}
+.btn:hover {
+  background: var(--cl-accent-soft);
+  border-color: var(--cl-border-strong);
+}
+.btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--cl-bg-deep);
+  border-color: var(--cl-border);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn.danger {
+  background: rgba(166, 59, 36, 0.2);
+  color: #ffb199;
+  border-color: rgba(255, 91, 69, 0.5);
+}
+.btn.danger:hover {
+  background: rgba(166, 59, 36, 0.32);
+}
+.btn.primary {
+  background: var(--cl-accent);
+  color: #160d08;
+  border-color: transparent;
+  font-weight: 600;
+}
+.btn.primary:hover {
+  background: var(--cl-accent-strong);
+}
+
+.editor-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .editor-panel {
+    width: 100%;
+    border-left: none;
+  }
+
+  .editor-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .editor-head-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Gemma highlight decorations — applied via Monaco. */
+.gemma-highlight,
+.gemma-highlight-inline {
+  background: rgba(217, 119, 58, 0.18);
+  border-bottom: 2px solid rgba(242, 140, 69, 0.8);
+  cursor: pointer;
+}
+
+.gemma-spinner {
+  position: absolute;
+  bottom: 16px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--cl-muted);
+  background: rgba(10, 9, 8, 0.82);
+  padding: 7px 12px;
+  border-radius: 1px;
+  border: 1px solid var(--cl-border);
+  pointer-events: none;
+  animation: fade-in 240ms ease both;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.spinner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--cl-flag-medium);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}

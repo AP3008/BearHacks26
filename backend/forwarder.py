@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, AsyncIterator, Optional
+
+import httpx
+from fastapi import Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
+import gating
+
+logger = logging.getLogger(__name__)
+
+_client: Optional[httpx.AsyncClient] = None
+_upstream: str = "https://api.anthropic.com"
+
+_HOP_BY_HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding"}
+
+
+def configure(upstream_url: str) -> None:
+    global _upstream
+    _upstream = upstream_url.rstrip("/")
+
+
+async def startup() -> None:
+    global _client
+    _client = httpx.AsyncClient(timeout=None)
+
+
+async def shutdown() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
+def _filter_request_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP}
+
+
+def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP}
+
+
+def _client_or_raise() -> httpx.AsyncClient:
+    if _client is None:
+        raise RuntimeError("forwarder not initialized")
+    return _client
+
+
+async def forward_messages(body: dict[str, Any], headers: dict[str, str]) -> Response:
+    url = f"{_upstream}/v1/messages"
+    payload = json.dumps(body).encode("utf-8")
+    fwd_headers = _filter_request_headers(headers)
+    fwd_headers["content-type"] = "application/json"
+
+    client = _client_or_raise()
+    try:
+        req = client.build_request("POST", url, content=payload, headers=fwd_headers)
+        upstream = await client.send(req, stream=True)
+    except (httpx.ConnectError, httpx.TransportError) as exc:
+        logger.warning("forwarder: upstream connection error: %s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"type": "proxy_upstream_error", "message": str(exc)}},
+        )
+
+    async def body_iter() -> AsyncIterator[bytes]:
+        gating.stream_in_flight += 1
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            gating.stream_in_flight = max(0, gating.stream_in_flight - 1)
+            await upstream.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        status_code=upstream.status_code,
+        headers=_filter_response_headers(upstream.headers),
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+async def passthrough(request: Request, full_path: str) -> Response:
+    url = f"{_upstream}/{full_path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+    body = await request.body()
+    fwd_headers = _filter_request_headers(dict(request.headers))
+
+    client = _client_or_raise()
+    try:
+        req = client.build_request(request.method, url, content=body, headers=fwd_headers)
+        upstream = await client.send(req, stream=True)
+    except (httpx.ConnectError, httpx.TransportError) as exc:
+        logger.warning("forwarder: passthrough upstream error: %s", exc)
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"type": "proxy_upstream_error", "message": str(exc)}},
+        )
+
+    async def body_iter() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        status_code=upstream.status_code,
+        headers=_filter_response_headers(upstream.headers),
+        media_type=upstream.headers.get("content-type"),
+    )
