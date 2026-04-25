@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 from models import Section
 
@@ -44,7 +44,7 @@ FLAGGING_JSON_SCHEMA: dict[str, Any] = {
 
 FLAGGING_SYSTEM = """You are a context prompt reviewer for a prompt engineer. You recieve a section of text that is either a user prompt, assistant response, tool call or tool output. This section inputted to you is a part of a larger conversation.
 You will flag parts within the section that are redundant, stale, or safe to remove without losing important context.
-You will also flag things that are unrelated to coding or the conversation goal.
+You will also flag things that are unrelated to coding.
 
 You will be loose on the flags, you may flag anything that shows a small amount of issue.
 
@@ -57,6 +57,7 @@ Return ONLY valid JSON. The output MUST be an object with a single key "flags" w
 Rules:
 - "high" = clearly redundant or stale. "medium" = likely removable. "low" = possibly trimmable.
 - You will flag things that are deemed low, medium or high severity.
+- If prior_conversation_excerpts is present and closely matches spans in section_text, treat repetition as redundancy and flag those spans more aggressively.
 - If nothing is flaggable, return {"flags": []}."""
 
 
@@ -92,7 +93,11 @@ def _section_for_prompt(section: Section) -> dict[str, Any]:
     return base
 
 
-def flagging_user(sections: list[Section]) -> str:
+def flagging_user(
+    sections: list[Section],
+    *,
+    prior_memories: Optional[list[dict[str, Any]]] = None,
+) -> str:
     # JSON user payload: section text is a separate field so it is clearly data, not instructions.
     if not sections:
         return ""
@@ -103,4 +108,6 @@ def flagging_user(sections: list[Section]) -> str:
         "section_type": section.sectionType,
         "section_text": section.rawContent,
     }
+    if prior_memories:
+        payload["prior_conversation_excerpts"] = prior_memories[:8]
     return json.dumps(payload, ensure_ascii=False)

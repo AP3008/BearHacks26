@@ -13,6 +13,7 @@ import forwarder
 import gating
 import interceptor
 import ws_manager
+from backboard import client as backboard_client
 from gemma import analyzer
 from models import (
     Approve,
@@ -38,6 +39,9 @@ logger = logging.getLogger("contextlens")
 ANTHROPIC_UPSTREAM_URL = os.getenv("ANTHROPIC_UPSTREAM_URL", "https://api.anthropic.com")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:e4b")
+BACKBOARD_API_KEY = os.getenv("BACKBOARD_API_KEY", "")
+BACKBOARD_ASSISTANT_ID = os.getenv("BACKBOARD_ASSISTANT_ID", "")
+BACKBOARD_API_URL = os.getenv("BACKBOARD_API_URL", "")
 
 
 def _build_snapshot() -> Snapshot:
@@ -61,17 +65,25 @@ def _build_snapshot() -> Snapshot:
 async def lifespan(app: FastAPI):
     forwarder.configure(ANTHROPIC_UPSTREAM_URL)
     analyzer.configure(OLLAMA_HOST, OLLAMA_MODEL)
+    backboard_client.configure(
+        api_key=BACKBOARD_API_KEY,
+        assistant_id=BACKBOARD_ASSISTANT_ID,
+        base_url=BACKBOARD_API_URL or None,
+    )
     ws_manager.register_snapshot_builder(_build_snapshot)
     await forwarder.startup()
+    await backboard_client.startup()
     await analyzer.probe()
     logger.info(
-        "contextlens proxy ready (upstream=%s, gemma_available=%s)",
+        "contextlens proxy ready (upstream=%s, gemma_available=%s, backboard=%s)",
         ANTHROPIC_UPSTREAM_URL,
         analyzer.is_available(),
+        backboard_client.is_configured(),
     )
     try:
         yield
     finally:
+        await backboard_client.shutdown()
         await forwarder.shutdown()
 
 

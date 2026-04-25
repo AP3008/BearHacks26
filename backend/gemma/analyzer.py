@@ -9,6 +9,7 @@ import httpx
 
 import gating
 import ws_manager
+from backboard import rag as backboard_rag
 from models import GemmaFlags, Section
 
 from . import prompts
@@ -214,7 +215,8 @@ async def flag(request_id: str, sections: list[Section]) -> None:
         return
     try:
         await _wait_for_idle()
-        user = prompts.flagging_user(sections)
+        prior = await backboard_rag.fetch_prior_memories(sections[0].rawContent) if sections else []
+        user = prompts.flagging_user(sections, prior_memories=prior or None)
         raw = await _chat_flagging(prompts.FLAGGING_SYSTEM, user, log_request_id=request_id)
         if raw is None:
             return
@@ -242,7 +244,8 @@ async def flag_for_section(request_id: str, section: Section) -> None:
         return
     try:
         await _wait_for_idle()
-        user = prompts.flagging_user([section])
+        prior = await backboard_rag.fetch_prior_memories(section.rawContent)
+        user = prompts.flagging_user([section], prior_memories=prior or None)
         raw = await _chat_flagging(
             prompts.FLAGGING_SYSTEM,
             user,

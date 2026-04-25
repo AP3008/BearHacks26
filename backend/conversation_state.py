@@ -23,6 +23,9 @@ _canonical: Optional[dict[str, Any]] = None
 # `incoming.messages[_last_seen_message_count:]` always slices off only the
 # genuinely-new tail.
 _last_seen_message_count: int = 0
+# After ResetCanonical we already rotate Backboard session in reset(); skip the
+# duplicate rotate on the next sync when _canonical is first repopulated.
+_skip_next_backboard_rotate: bool = False
 _lock: asyncio.Lock = asyncio.Lock()
 
 
@@ -55,7 +58,7 @@ async def sync(incoming: dict[str, Any]) -> dict[str, Any]:
     """Merge incoming Claude Code body into canonical and return the body
     to use going forward. Caller is responsible for confirming this is a
     main-conversation call via `is_main_conversation` first."""
-    global _canonical, _last_seen_message_count
+    global _canonical, _last_seen_message_count, _skip_next_backboard_rotate
     async with _lock:
         msgs = incoming.get("messages") or []
         if not isinstance(msgs, list):
@@ -69,6 +72,17 @@ async def sync(incoming: dict[str, Any]) -> dict[str, Any]:
                     len(msgs),
                     _last_seen_message_count,
                 )
+            try:
+                from backboard import ingest as bb_ingest
+
+                if _canonical is not None:
+                    bb_ingest.rotate_session()
+                elif _skip_next_backboard_rotate:
+                    _skip_next_backboard_rotate = False
+                else:
+                    bb_ingest.rotate_session()
+            except Exception:
+                logger.exception("conversation_state: backboard rotate_session failed")
             _canonical = copy.deepcopy(incoming)
             _last_seen_message_count = len(msgs)
             return copy.deepcopy(_canonical)
@@ -95,6 +109,8 @@ async def sync(incoming: dict[str, Any]) -> dict[str, Any]:
 async def commit_edits(
     removed_indices: list[int],
     edited_sections: list[EditedSection],
+    *,
+    request_id: str = "",
 ) -> dict[str, Any]:
     """Apply user edits to canonical (system → tools → messages slot walk).
     Returns the new canonical for forwarding."""
@@ -103,6 +119,7 @@ async def commit_edits(
         if _canonical is None:
             logger.warning("conversation_state: commit_edits with empty canonical")
             return {}
+        old = copy.deepcopy(_canonical)
         _canonical = gating.apply_edits(_canonical, removed_indices, edited_sections)
         logger.info(
             "conversation_state: committed removed=%d edited=%d (canonical msgs=%d)",
@@ -110,12 +127,33 @@ async def commit_edits(
             len(edited_sections),
             len(_canonical.get("messages") or []),
         )
-        return copy.deepcopy(_canonical)
+        result = copy.deepcopy(_canonical)
+    if request_id:
+        try:
+            from backboard import ingest as bb_ingest
+
+            bb_ingest.schedule_after_edits(
+                old_body=old,
+                new_body=result,
+                removed_indices=removed_indices,
+                edited_sections=edited_sections,
+                request_id=request_id,
+            )
+        except Exception:
+            logger.exception("conversation_state: backboard schedule_after_edits failed")
+    return result
 
 
 async def reset() -> None:
-    global _canonical, _last_seen_message_count
+    global _canonical, _last_seen_message_count, _skip_next_backboard_rotate
     async with _lock:
         _canonical = None
         _last_seen_message_count = 0
+        _skip_next_backboard_rotate = True
         logger.info("conversation_state: reset")
+    try:
+        from backboard import ingest as bb_ingest
+
+        bb_ingest.rotate_session()
+    except Exception:
+        logger.exception("conversation_state: backboard rotate_session on reset failed")

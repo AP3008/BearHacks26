@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -13,6 +14,7 @@ import conversation_state
 import forwarder
 import gating
 import ws_manager
+from backboard import ingest as bb_ingest
 from models import NewRequest, Section
 
 logger = logging.getLogger(__name__)
@@ -162,6 +164,9 @@ async def handle(request: Request) -> Response:
     if not conversation_state.is_main_conversation(body):
         return await forwarder.forward_messages(body, headers)
 
+    request_id = uuid.uuid4().hex
+    pre_sync = copy.deepcopy(body)
+
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
     body = await conversation_state.sync(body)
@@ -175,7 +180,8 @@ async def handle(request: Request) -> Response:
             stripped,
         )
 
-    request_id = uuid.uuid4().hex
+    bb_ingest.schedule_raw_incoming(pre_sync, request_id)
+    bb_ingest.schedule_canonical_synced(copy.deepcopy(body), request_id)
     sections, total_tokens, total_cost, model = classifier.classify(body)
     _remember(request_id, sections)
 
@@ -237,7 +243,9 @@ async def handle(request: Request) -> Response:
                     len(held.edited_sections),
                 )
                 body = await conversation_state.commit_edits(
-                    held.removed_indices, held.edited_sections
+                    held.removed_indices,
+                    held.edited_sections,
+                    request_id=request_id,
                 )
         finally:
             gating.release(request_id)
