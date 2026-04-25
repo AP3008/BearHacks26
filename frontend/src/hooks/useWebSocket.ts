@@ -86,6 +86,18 @@ export function useWebSocket(handlers: Handlers) {
       sendResetCanonical() {
         api.postMessage({ type: "reset_canonical" });
       },
+      sendCommitEditsNow(
+        requestId: string,
+        removedIndices: number[],
+        editedSections: EditedSection[],
+      ) {
+        api.postMessage({
+          type: "commit_edits_now",
+          requestId,
+          removedIndices,
+          editedSections,
+        });
+      },
     };
   }, []);
 }

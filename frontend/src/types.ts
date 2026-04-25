@@ -134,13 +134,21 @@ export interface ResetCanonical {
   type: "reset_canonical";
 }
 
+export interface CommitEditsNow {
+  type: "commit_edits_now";
+  requestId: string;
+  removedIndices: number[];
+  editedSections: EditedSection[];
+}
+
 export type OutboundMessage =
   | ApproveRequest
   | ModifiedRequest
   | ModeChange
   | PauseToggle
   | RequestSuggestion
-  | ResetCanonical;
+  | ResetCanonical
+  | CommitEditsNow;
 
 export interface PersistedState {
   gemmaUnavailableNoticeShown: boolean;

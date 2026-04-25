@@ -12,8 +12,10 @@ const COLUMN_WIDTH = 110;
 const COLUMN_GAP = 14;
 const LABEL_HEIGHT = 22;
 const STICK_THRESHOLD_PX = 24;
-const TOP_PAD = LABEL_HEIGHT + 8;
-const BOTTOM_PAD = 8;
+// Label sits below all columns now, so the bottom pad reserves the label
+// strip and the top pad is just breathing room above the tallest column.
+const TOP_PAD = 8;
+const BOTTOM_PAD = LABEL_HEIGHT + 8;
 const MIN_BAR_HEIGHT = 12;
 // Visual density: how tall (in pixels) one token is. Fixed scaling — a 10k
 // system prompt is taller than the viewport on purpose, so it overflows and
@@ -98,6 +100,7 @@ export function BarChart({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
   const stickRightRef = useRef(true);
+  const stickBottomRef = useRef(true);
 
   useLayoutEffect(() => {
     const el = scrollerRef.current;
@@ -201,24 +204,29 @@ export function BarChart({
   const innerWidth = Math.max(containerWidth, totalColumnsWidth + 16);
   const svgHeight = TOP_PAD + maxStackHeight + BOTTOM_PAD;
 
-  // Track stick state for horizontal scroll only — pinned to the right so the
-  // newest turn stays in view as new columns append. Vertical scroll resets to
-  // the top on every update so the user always lands on the new turn's label
-  // and the top of the latest bar.
+  // Track stick state for both axes. Horizontal: pinned to the right so the
+  // newest prompt stays in view as new columns append. Vertical: pinned to the
+  // bottom so the PROMPT label and the newly-appended chunks at the bottom of
+  // the latest column stay in view as the conversation grows. Either pin
+  // releases the moment the user manually scrolls away from that edge, so the
+  // user can scroll up/left to read older content without getting yanked back.
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const distFromRight = el.scrollWidth - (el.scrollLeft + el.clientWidth);
     stickRightRef.current = distFromRight <= STICK_THRESHOLD_PX;
+    const distFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
+    stickBottomRef.current = distFromBottom <= STICK_THRESHOLD_PX;
   }, []);
 
   const totalSections = sections.length;
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    // Always pin to top on update — TURN labels and the newest turn's bar stay
-    // in view; tall columns extend downward and are reached by scrolling down.
-    el.scrollTop = 0;
+    // Pin to bottom-right by default — new chunks land at the bottom of the
+    // newest column (just above the PROMPT label), so this keeps them in
+    // view. Released as soon as the user scrolls away from either edge.
+    if (stickBottomRef.current) el.scrollTop = el.scrollHeight - el.clientHeight;
     if (stickRightRef.current) el.scrollLeft = el.scrollWidth;
   }, [count, totalSections, maxStackHeight]);
 
@@ -272,13 +280,15 @@ export function BarChart({
           className="chart-svg"
         >
           <AnimatePresence initial={false}>
-            {stackLayouts.map(({ stack, heights }, stackIndex) => {
+            {stackLayouts.map(({ stack, heights, total }, stackIndex) => {
               const x = stackIndex * (barWidth + COLUMN_GAP);
-              // Top-anchored columns: every column hangs from the same top
-              // line just under the TURN label, so a short new turn shows up
-              // right at the top of the viewport (where auto-scroll lands)
-              // and tall columns extend downward off-screen.
-              let cursorY = TOP_PAD;
+              // Bottom-anchored columns: every column rests on the same
+              // baseline just above the PROMPT label row, so newly appended
+              // chunks for the in-flight turn land closest to the label
+              // (auto-scroll pins the viewport here) and tall columns extend
+              // upward off-screen.
+              const columnBottom = svgHeight - BOTTOM_PAD;
+              let cursorY = columnBottom - total;
               return (
                 <motion.g
                   key={stack.id}
@@ -291,10 +301,10 @@ export function BarChart({
                   <text
                     className="column-label"
                     x={x + barWidth / 2}
-                    y={LABEL_HEIGHT - 6}
+                    y={svgHeight - 6}
                     textAnchor="middle"
                   >
-                    {`TURN ${stack.turnNumber}`}
+                    {`PROMPT ${stack.turnNumber}`}
                   </text>
                   {stack.sections.map((s, sectionIndex) => {
                     const heightPx = heights[sectionIndex];
