@@ -92,7 +92,7 @@ async def _chat_flagging(
                     # schema enforcement unless we need it.
                     "format": "json",
                     "options": {
-                        "temperature": 0,
+                        "temperature": 0.7,
                         # Allow enough room for large highlight arrays.
                         "num_predict": 2048,
                     },

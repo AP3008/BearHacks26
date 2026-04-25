@@ -123,21 +123,22 @@ def parse_flags(raw: str, *, default_section_index: int | None = None) -> list[G
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        idx = _coerce_int(entry.get("sectionIndex"))
-        if idx is None and default_section_index is not None:
-            idx = default_section_index
         severity = entry.get("severity")
+        if severity not in _VALID_SEVERITY:
+            continue
+        idx = _coerce_int(entry.get("sectionIndex")) or default_section_index
         reason = entry.get("reason")
         if not isinstance(reason, str):
             reason = "Flagged as removable context."
-        if idx is None or severity not in _VALID_SEVERITY:
+        highlights = _parse_highlights(entry.get("highlights", []))
+        if not highlights:
             continue
         flags.append(
             GemmaFlag(
                 sectionIndex=idx,
                 severity=severity,
                 reason=reason,
-                highlights=_parse_highlights(entry.get("highlights", [])),
+                highlights=highlights,
             )
         )
     return flags
