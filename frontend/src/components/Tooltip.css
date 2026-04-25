@@ -1,0 +1,90 @@
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  width: 340px;
+  padding: 14px 16px;
+  border-radius: 1px;
+  background: rgba(18, 15, 12, 0.96);
+  color: var(--cl-text);
+  border: 1px solid var(--cl-border-strong);
+  font-size: 14px;
+  line-height: 1.4;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tooltip-type {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  display: inline-block;
+}
+.type-dot.type-system { background: var(--cl-color-system); }
+.type-dot.type-user { background: var(--cl-color-user); }
+.type-dot.type-assistant { background: var(--cl-color-assistant); }
+.type-dot.type-tool_call { background: var(--cl-color-tool_call); }
+.type-dot.type-tool_output { background: var(--cl-color-tool_output); }
+.type-dot.type-unknown {
+  background: transparent;
+  border: 1px solid var(--cl-color-unknown);
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tooltip-key {
+  color: var(--cl-muted);
+}
+
+.tooltip-val {
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-preview {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  font-family: var(--vscode-editor-font-family, ui-monospace, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--cl-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tooltip-flag {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 1px;
+  font-size: 13px;
+  line-height: 1.45;
+  background: rgba(217, 119, 58, 0.1);
+  border-left: 2px solid var(--cl-flag-medium);
+}
+.tooltip-flag.severity-high { border-left-color: var(--cl-flag-high); }
+.tooltip-flag.severity-medium { border-left-color: var(--cl-flag-medium); }
+.tooltip-flag.severity-low { border-left-color: var(--cl-flag-low); }
+
+.flag-label {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+  margin-right: 6px;
+  color: var(--cl-flag-medium);
+}
+.tooltip-flag.severity-high .flag-label { color: var(--cl-flag-high); }
+.tooltip-flag.severity-low .flag-label { color: var(--cl-flag-low); }
