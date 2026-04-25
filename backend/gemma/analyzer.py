@@ -151,6 +151,7 @@ async def suggest_for_section(request_id: str, section: Section, goal: str) -> N
     if not _available:
         return
     highlights = []
+    raw = None
     try:
         await _wait_for_idle()
         user = prompts.suggestion_user(section, goal)
@@ -171,6 +172,11 @@ async def suggest_for_section(request_id: str, section: Section, goal: str) -> N
         logger.exception("gemma: suggest_for_section task crashed")
     finally:
         # Always respond so the UI can clear its pending spinner.
+        if raw is not None and highlights == []:
+            # Useful when the model returned something unparsable: the parser logs
+            # a payload preview, but keeping a full copy here helps debugging.
+            logger.info("gemma: suggestion raw (no highlights) request_id=%s index=%s raw=%s",
+                        request_id, section.index, raw)
         try:
             await ws_manager.send(
                 GemmaSuggestion(
