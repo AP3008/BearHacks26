@@ -50,9 +50,12 @@ async def probe() -> None:
             )
             _available = False
             return
-        from ollama import AsyncClient as OllamaClient  # type: ignore
-
-        _client = OllamaClient(host=_host)
+        # NOTE: we intentionally do not use the `ollama` python client for chat
+        # calls. Some Ollama response fields (notably `message.thinking`) are
+        # not preserved by the client's typed models in certain versions,
+        # which can make `message.content` appear empty even when the model
+        # returned useful output. Using httpx keeps the raw JSON intact.
+        _client = True
         _available = True
         logger.info("gemma: available (model=%s, host=%s)", _model, _host)
     except Exception as exc:
@@ -76,22 +79,37 @@ async def _chat(system: str, user: str) -> Optional[str]:
         # Ollama can occasionally stall (cold model load, GPU contention, or
         # the model drifting into verbose JSON). Keep this path responsive by
         # bounding both runtime and output length.
-        resp = await asyncio.wait_for(
-            _client.chat(
-                model=_model,
-                format="json",
-                options={
-                    "temperature": 0,
-                    "num_predict": 256,
-                },
-                keep_alive="10m",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            ),
-            timeout=_chat_timeout_s,
-        )
+        async with httpx.AsyncClient(timeout=_chat_timeout_s) as client:
+            resp = await asyncio.wait_for(
+                client.post(
+                    f"{_host}/api/chat",
+                    json={
+                        "model": _model,
+                        "format": "json",
+                        "options": {
+                            "temperature": 0,
+                            "num_predict": 256,
+                        },
+                        "keep_alive": "10m",
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        "stream": False,
+                    },
+                ),
+                timeout=_chat_timeout_s,
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "gemma: chat HTTP %s (model=%s host=%s body=%s)",
+                resp.status_code,
+                _model,
+                _host,
+                (resp.text or "")[:400],
+            )
+            return None
+        resp = resp.json()
     except asyncio.TimeoutError:
         logger.warning("gemma: chat call timed out (model=%s host=%s)", _model, _host)
         raise
@@ -128,11 +146,16 @@ async def _chat(system: str, user: str) -> Optional[str]:
             keys = list(resp.keys()) if isinstance(resp, dict) else []
         except Exception:
             keys = []
+        try:
+            msg_keys = list(msg.keys()) if isinstance(msg, dict) else []
+        except Exception:
+            msg_keys = []
         logger.warning(
-            "gemma: empty chat content (model=%s host=%s resp_keys=%s msg=%r)",
+            "gemma: empty chat content (model=%s host=%s resp_keys=%s msg_keys=%s msg=%r)",
             _model,
             _host,
             keys,
+            msg_keys,
             msg,
         )
         return None
