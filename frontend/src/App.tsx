@@ -102,6 +102,20 @@ function reducer(state: AppState, action: Action): AppState {
         paused: msg.paused,
         gemmaAvailable: msg.gemmaAvailable,
       };
+      // Reconcile multi-hold queue: server is source of truth. Filter to
+      // main-conversation, drop the head (which becomes currentRequest),
+      // and replace local pendingQueue. Without this, reconnecting after
+      // multiple holds piled up shows only one — the rest stay invisible.
+      const pendingFromSnapshot = (msg.pendingRequests ?? []).filter(
+        isMainConversationRequest,
+      );
+      if (pendingFromSnapshot.length > 1) {
+        next.pendingQueue = pendingFromSnapshot.slice(1);
+      } else if (state.pendingQueue.length > 0 && pendingFromSnapshot.length <= 1) {
+        // Server has cleared queue (e.g. all queued requests were resolved
+        // while the panel was disconnected). Sync down.
+        next.pendingQueue = [];
+      }
       if (incoming && isMainConversationRequest(incoming)) {
         const sameId = state.currentRequest?.requestId === incoming.requestId;
         if (!sameId) {
@@ -655,6 +669,7 @@ export default function App() {
         mode={state.mode}
         paused={state.paused}
         held={cr.held}
+        queueLength={state.pendingQueue.length}
         totalTokens={totalTokens}
         totalCost={totalCost}
         hasEdits={hasEstimate}

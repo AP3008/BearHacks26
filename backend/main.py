@@ -44,14 +44,15 @@ def _build_snapshot() -> Snapshot:
     """Authoritative state replay sent to every WS client on connect. Without
     this, opening the panel after a request was already held leaves the proxy
     waiting forever — the user never sees the Send button."""
-    held = interceptor.held_request()
+    held_list = interceptor.held_requests()
     latest = interceptor.latest_request()
     gating_state = gating.state()
     return Snapshot(
         mode=gating_state["mode"],
         paused=gating_state["paused"],
         gemmaAvailable=analyzer.is_available(),
-        pendingRequest=held,
+        pendingRequest=held_list[0] if held_list else None,
+        pendingRequests=held_list,
         latestRequest=latest,
         recentRequests=interceptor.recent_history(),
     )
