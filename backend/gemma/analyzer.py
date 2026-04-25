@@ -20,14 +20,14 @@ _available: bool = False
 _host: str = "http://localhost:11434"
 _model: str = "gemma4:e4b"
 _client: Optional[Any] = None
-_chat_timeout_s: float = 45.0
+_chat_timeout_s: float = 120.0
 
 
 def configure(host: str, model: str) -> None:
     global _host, _model, _chat_timeout_s
     _host = host
     _model = model
-    _chat_timeout_s = float(os.getenv("GEMMA_CHAT_TIMEOUT_S", "45"))
+    _chat_timeout_s = float(os.getenv("GEMMA_CHAT_TIMEOUT_S", "120"))
 
 
 def is_available() -> bool:
