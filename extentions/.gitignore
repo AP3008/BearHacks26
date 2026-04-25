@@ -1,5 +1,4 @@
-.claude/ 
-.vscode/ 
+node_modules/
+out/
+*.vsix
 .DS_Store
-contextlens-prd.md
-BACKEND_PLAN.md
