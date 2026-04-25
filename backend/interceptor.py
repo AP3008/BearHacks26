@@ -144,13 +144,17 @@ def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tu
     def _maybe_strip(block: Any, state: dict[str, int]) -> None:
         if not isinstance(block, dict):
             return
-        if "cache_control" not in block:
-            return
-        state["seen"] += 1
-        if state["seen"] <= max_blocks:
-            return
-        block.pop("cache_control", None)
-        state["stripped"] += 1
+        if "cache_control" in block:
+            state["seen"] += 1
+            if state["seen"] > max_blocks:
+                block.pop("cache_control", None)
+                state["stripped"] += 1
+
+        # Recurse into nested content arrays (e.g., tool_result blocks)
+        nested_content = block.get("content")
+        if isinstance(nested_content, list):
+            for inner_block in nested_content:
+                _maybe_strip(inner_block, state)
 
     state = {"seen": 0, "stripped": 0}
 
@@ -205,6 +209,15 @@ async def handle(request: Request) -> Response:
         )
         return await _forward_raw(raw, headers)
 
+    # Safety: enforce Anthropic's cap on cache_control blocks for ALL requests.
+    # This prevents upstream 400s when ANY caller adds more than allowed.
+    body, stripped = _strip_excess_cache_control(body, max_blocks=4)
+    if stripped:
+        logger.warning(
+            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit",
+            stripped,
+        )
+
     # Aux calls (title gen, topic detection, summarization) ship no `tools`
     # and a tiny system prompt. They aren't part of the user's main
     # conversation, so they bypass the canonical entirely — appending their
@@ -219,15 +232,6 @@ async def handle(request: Request) -> Response:
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
     body = await conversation_state.sync(body)
-
-    # Safety: enforce Anthropic's cap on cache_control blocks. This prevents
-    # upstream 400s when the caller adds more than allowed.
-    body, stripped = _strip_excess_cache_control(body, max_blocks=4)
-    if stripped:
-        logger.warning(
-            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit",
-            stripped,
-        )
 
     bb_ingest.schedule_raw_incoming(pre_sync, request_id)
     bb_ingest.schedule_canonical_synced(copy.deepcopy(body), request_id)
