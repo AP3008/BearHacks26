@@ -73,15 +73,25 @@ async def _wait_for_idle(max_wait_s: float = 8.0) -> None:
         await asyncio.sleep(0.1)
 
 
+def _flagging_user_turns(
+    section_turn: str, prior: Optional[list[dict[str, Any]]]
+) -> list[str]:
+    """Section user turn, then optional Backboard similar-excerpts user turn."""
+    turns = [section_turn]
+    back = prompts.backboard_turn(prior)
+    if back:
+        turns.append(back)
+    return turns
+
+
 async def _chat_flagging(
-    system: str, user: str, *, log_request_id: str = "", log_section_index: int | None = None
+    system: str, user_turns: list[str], *, log_request_id: str = "", log_section_index: int | None = None
 ) -> Optional[str]:
     """Ollama chat with JSON Schema output. Never treats `message.thinking` as the model output."""
     if _client is None:
         return None
-    # Gemma 4 prompt formatting: explicitly separate system/user/model turns
-    # using Gemma's reserved control tokens.
-    formatted = prompts.format_gemma4_dialogue(system=system, user=user)
+    # Gemma 4 prompt formatting: system + one or more user turns + model.
+    formatted = prompts.format_gemma4_dialogue_multi(system=system, user_turns=user_turns)
     try:
         async with httpx.AsyncClient(timeout=_chat_timeout_s) as client:
             resp = await client.post(
@@ -213,8 +223,10 @@ async def flag(request_id: str, sections: list[Section]) -> None:
     try:
         await _wait_for_idle()
         prior = await backboard_rag.fetch_prior_memories(sections[0].rawContent) if sections else []
-        user = prompts.flagging_user(sections, prior_memories=prior or None)
-        raw = await _chat_flagging(prompts.FLAGGING_SYSTEM, user, log_request_id=request_id)
+        user_turns = _flagging_user_turns(
+            prompts.flagging_user(sections), prior or None
+        )
+        raw = await _chat_flagging(prompts.FLAGGING_SYSTEM, user_turns, log_request_id=request_id)
         if raw is None:
             return
         # We only ever send one section in the user payload today (see
@@ -242,10 +254,12 @@ async def flag_for_section(request_id: str, section: Section) -> None:
     try:
         await _wait_for_idle()
         prior = await backboard_rag.fetch_prior_memories(section.rawContent)
-        user = prompts.flagging_user([section], prior_memories=prior or None)
+        user_turns = _flagging_user_turns(
+            prompts.flagging_user([section]), prior or None
+        )
         raw = await _chat_flagging(
             prompts.FLAGGING_SYSTEM,
-            user,
+            user_turns,
             log_request_id=request_id,
             log_section_index=section.index,
         )
