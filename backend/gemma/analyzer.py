@@ -12,7 +12,7 @@ import ws_manager
 from models import GemmaFlags, GemmaSuggestion, Section
 
 from . import prompts
-from .parser import parse_flags, parse_suggestion
+from .parser import parse_flags, try_parse_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -206,14 +206,30 @@ async def suggest_for_section(request_id: str, section: Section, goal: str) -> N
         raw = await _chat(prompts.SUGGESTION_SYSTEM, user)
         if raw is None:
             return
-        highlights = parse_suggestion(raw)
-        logger.info(
-            "gemma: suggestion ok request_id=%s index=%s highlights=%d raw=%s",
-            request_id,
-            section.index,
-            len(highlights),
-            raw,
-        )
+        highlights, parsed_ok = try_parse_suggestion(raw)
+        if not parsed_ok:
+            # One strict retry: some model builds drift into conversational output
+            # when the section looks like a schema (tool defs). We re-ask with a
+            # more forceful system prompt to coerce valid JSON.
+            retry_raw = await _chat(prompts.SUGGESTION_SYSTEM_RETRY, user)
+            if retry_raw is not None:
+                raw = retry_raw
+                highlights, parsed_ok = try_parse_suggestion(raw)
+        if parsed_ok:
+            logger.info(
+                "gemma: suggestion ok request_id=%s index=%s highlights=%d raw=%s",
+                request_id,
+                section.index,
+                len(highlights),
+                raw,
+            )
+        else:
+            logger.warning(
+                "gemma: suggestion unparsable request_id=%s index=%s raw=%s",
+                request_id,
+                section.index,
+                raw,
+            )
     except asyncio.TimeoutError:
         logger.warning("gemma: suggestion timed out request_id=%s index=%s", request_id, section.index)
     except Exception:

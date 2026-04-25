@@ -134,20 +134,25 @@ def parse_flags(raw: str) -> list[GemmaFlag]:
 
 
 def parse_suggestion(raw: str) -> list[SuggestionHighlight]:
+    highlights, _ = try_parse_suggestion(raw)
+    return highlights
+
+
+def try_parse_suggestion(raw: str) -> tuple[list[SuggestionHighlight], bool]:
     payload = _extract_json_payload(raw)
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
         preview = payload.strip().replace("\n", "\\n")[:400]
         logger.warning("gemma: malformed suggestion JSON payload=%s", preview)
-        return []
+        return [], False
 
     if isinstance(data, dict) and isinstance(data.get("highlights"), list):
         entries = data["highlights"]
     elif isinstance(data, list):
         entries = data
     else:
-        return []
+        return [], False
 
     out: list[SuggestionHighlight] = []
     for entry in entries:
@@ -159,4 +164,4 @@ def parse_suggestion(raw: str) -> list[SuggestionHighlight]:
         if start is None or end is None or not isinstance(reason, str):
             continue
         out.append(SuggestionHighlight(start=start, end=end, reason=reason))
-    return out
+    return out, True

@@ -90,6 +90,54 @@ def _push_history(req: NewRequest) -> None:
         _history.pop(0)
 
 
+def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tuple[dict[str, Any], int]:
+    """Anthropic enforces a hard cap on the number of blocks containing
+    `cache_control` across the entire request. Some upstream clients (e.g. IDE
+    agents) can exceed this, which causes a 400.
+
+    We keep the first `max_blocks` occurrences (in a stable traversal order)
+    and remove `cache_control` from any additional blocks.
+    """
+
+    def _maybe_strip(block: Any, state: dict[str, int]) -> None:
+        if not isinstance(block, dict):
+            return
+        if "cache_control" not in block:
+            return
+        state["seen"] += 1
+        if state["seen"] <= max_blocks:
+            return
+        block.pop("cache_control", None)
+        state["stripped"] += 1
+
+    state = {"seen": 0, "stripped": 0}
+
+    # 1) system: may be string OR list[content_block]
+    system = body.get("system")
+    if isinstance(system, list):
+        for block in system:
+            _maybe_strip(block, state)
+
+    # 2) tools: list[tool_def]
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            _maybe_strip(tool, state)
+
+    # 3) messages: list[{role, content}], where content may be string OR list[content_block]
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    _maybe_strip(block, state)
+
+    return body, state["stripped"]
+
+
 async def handle(request: Request) -> Response:
     global _held_request, _latest_request
 
@@ -117,6 +165,15 @@ async def handle(request: Request) -> Response:
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
     body = await conversation_state.sync(body)
+
+    # Safety: enforce Anthropic's cap on cache_control blocks. This prevents
+    # upstream 400s when the caller adds more than allowed.
+    body, stripped = _strip_excess_cache_control(body, max_blocks=4)
+    if stripped:
+        logger.warning(
+            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit",
+            stripped,
+        )
 
     request_id = uuid.uuid4().hex
     sections, total_tokens, total_cost, model = classifier.classify(body)

@@ -33,7 +33,25 @@ Return ONLY valid JSON of the form:
   ]
 }
 
+Hard constraints:
+- Output must start with "{" and end with "}" (no prose, no markdown, no code fences).
+- Never ask the user questions. Never explain what tools are. Never restate the prompt.
+- You MUST follow the schema even if the section is a tool definition / JSON schema.
+
 Character offsets refer to the section text exactly as provided. If nothing is removable, return {"highlights": []}."""
+
+
+SUGGESTION_SYSTEM_RETRY = """You are returning INVALID output. Fix it now.
+
+Return ONLY a single JSON object. No prose, no markdown, no code fences.
+
+Schema (must match exactly):
+{"highlights":[{"start":0,"end":0,"reason":"..."}]}
+
+Rules:
+- Output must start with "{" and end with "}".
+- If you cannot find anything removable, return {"highlights": []}.
+- Do not include any keys other than "highlights" (and within it: start, end, reason)."""
 
 
 def _section_for_prompt(section: Section) -> dict[str, Any]:
