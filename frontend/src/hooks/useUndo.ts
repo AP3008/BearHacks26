@@ -19,10 +19,10 @@ export function useUndo({ applySnapshot }: Args) {
     });
   }, []);
 
-  const undo = useCallback(() => {
-    const snapshot = stackRef.current.pop();
+  const undo = useCallback((): UndoSnapshot | null => {
+    const snapshot = stackRef.current.pop() ?? null;
     if (snapshot) applySnapshot(snapshot);
-    return snapshot != null;
+    return snapshot;
   }, [applySnapshot]);
 
   const clear = useCallback(() => {

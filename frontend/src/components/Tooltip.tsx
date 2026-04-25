@@ -17,6 +17,7 @@ const TYPE_LABEL: Record<string, string> = {
   assistant: "Assistant response",
   tool_call: "Tool call",
   tool_output: "Tool output",
+  thinking: "Thinking",
   unknown: "Unknown",
 };
 

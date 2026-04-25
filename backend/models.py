@@ -13,6 +13,7 @@ SectionType = Literal[
     "tool_call",
     "tool_output",
     "image",
+    "thinking",
     "unknown",
 ]
 Severity = Literal["high", "medium", "low"]

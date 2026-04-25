@@ -39,6 +39,7 @@
 .type-dot.type-assistant { background: var(--cl-color-assistant); }
 .type-dot.type-tool_call { background: var(--cl-color-tool_call); }
 .type-dot.type-tool_output { background: var(--cl-color-tool_output); }
+.type-dot.type-thinking { background: var(--cl-color-thinking); }
 .type-dot.type-unknown {
   background: transparent;
   border: 1px solid var(--cl-color-unknown);

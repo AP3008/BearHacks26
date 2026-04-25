@@ -59,3 +59,25 @@
   border-radius: 1px;
   color: var(--cl-accent-strong);
 }
+
+.undo-toast-anchor {
+  position: absolute;
+  bottom: 14px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.undo-toast {
+  background: var(--cl-panel-strong);
+  border: 1px solid var(--cl-border-strong);
+  color: var(--cl-text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 3px;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
