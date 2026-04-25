@@ -78,6 +78,18 @@ function BarImpl({
         stroke={isUnknown ? colorVar : "none"}
         strokeWidth={isUnknown ? 1.5 : 0}
       />
+      {!isUnknown && (
+        <rect
+          className="bar-top-highlight"
+          x={barX}
+          y={y}
+          width={barW}
+          height={1}
+          fill="white"
+          opacity={0.18}
+          pointerEvents="none"
+        />
+      )}
       {isMarkedForDelete && (
         <line
           className="bar-strike"

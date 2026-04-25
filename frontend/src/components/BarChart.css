@@ -52,6 +52,11 @@
   transform-box: fill-box;
 }
 
+.bar-top-highlight {
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
 .bar-group:hover .bar-fill {
   opacity: 0.82;
   filter: brightness(1.12);
