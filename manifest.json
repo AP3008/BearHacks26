@@ -2,20 +2,23 @@
   "manifest_version": 3,
   "name": "GitHub Pro Enhancer",
   "version": "1.0",
-  "description": "Advanced GitHub tools",
-  "permissions": ["scripting", "activeTab"],
+  "description": "Adds useful tools to GitHub",
+  "permissions": ["activeTab", "scripting"],
   "host_permissions": ["https://github.com/*"],
+
   "background": {
     "service_worker": "background.js"
   },
+
   "action": {
-    "default_popup": "popup/popup.html",
-    "default_icon": "assets/icon.png"
+    "default_popup": "popup/popup.html"
   },
+
   "content_scripts": [
     {
       "matches": ["https://github.com/*"],
-      "js": ["content/content.js"]
+      "js": ["content/content.js"],
+      "css": ["content/content.css"]
     }
   ]
 }
