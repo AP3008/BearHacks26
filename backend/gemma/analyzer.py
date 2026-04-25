@@ -72,20 +72,20 @@ async def _wait_for_idle(max_wait_s: float = 8.0) -> None:
         await asyncio.sleep(0.1)
 
 
-async def _chat(system: str, user: str) -> Optional[str]:
+async def _chat_flagging(
+    system: str, user: str, *, log_request_id: str = "", log_section_index: int | None = None
+) -> Optional[str]:
+    """Ollama chat with JSON Schema output. Never treats `message.thinking` as the model output."""
     if _client is None:
         return None
     try:
-        # Ollama can occasionally stall (cold model load, GPU contention, or
-        # the model drifting into verbose JSON). Keep this path responsive by
-        # bounding both runtime and output length.
         async with httpx.AsyncClient(timeout=_chat_timeout_s) as client:
             resp = await asyncio.wait_for(
                 client.post(
                     f"{_host}/api/chat",
                     json={
                         "model": _model,
-                        "format": "json",
+                        "format": prompts.FLAGGING_JSON_SCHEMA,
                         "options": {
                             "temperature": 0,
                             "num_predict": 256,
@@ -130,18 +130,43 @@ async def _chat(system: str, user: str) -> Optional[str]:
         content = getattr(msg, "content", None)
         thinking = getattr(msg, "thinking", None)
 
-    if isinstance(content, str):
-        if content.strip():
-            return content
-        # Some Ollama/model combinations populate `thinking` instead of `content`.
-        # Fall back so we can still parse JSON from the actual text.
-        if isinstance(thinking, str) and thinking.strip():
-            logger.info(
-                "gemma: using thinking as content (model=%s host=%s)",
-                _model,
-                _host,
-            )
-            return thinking
+    # Log every response; do not use `thinking` as parseable output (often non-JSON).
+    think_preview = ""
+    if isinstance(thinking, str) and thinking.strip():
+        think_preview = thinking.strip().replace("\n", "\\n")[:800]
+
+    if content is not None and not isinstance(content, str):
+        logger.warning(
+            "gemma: non-string chat content (model=%s host=%s type=%s value=%r)",
+            _model,
+            _host,
+            type(content).__name__,
+            content,
+        )
+        return None
+
+    if isinstance(content, str) and content.strip():
+        out = content.strip().replace("\n", "\\n")
+        ctx = f" request_id={log_request_id}" if log_request_id else ""
+        if log_section_index is not None:
+            ctx += f" index={log_section_index}"
+        logger.info(
+            "gemma: flagging response content (model=%s)%s content=%s thinking_preview=%s",
+            _model,
+            ctx,
+            out[:2000],
+            think_preview[:400] if think_preview else "",
+        )
+        return content
+
+    if isinstance(thinking, str) and thinking.strip():
+        logger.warning(
+            "gemma: empty content but thinking present (ignored for JSON; model=%s host=%s) thinking=%s",
+            _model,
+            _host,
+            think_preview[:1200],
+        )
+    else:
         try:
             keys = list(resp.keys()) if isinstance(resp, dict) else []
         except Exception:
@@ -151,33 +176,13 @@ async def _chat(system: str, user: str) -> Optional[str]:
         except Exception:
             msg_keys = []
         logger.warning(
-            "gemma: empty chat content (model=%s host=%s resp_keys=%s msg_keys=%s msg=%r)",
+            "gemma: empty flagging content (model=%s host=%s resp_keys=%s msg_keys=%s msg=%r)",
             _model,
             _host,
             keys,
             msg_keys,
             msg,
         )
-        return None
-
-    if content is None:
-        if isinstance(thinking, str) and thinking.strip():
-            logger.info(
-                "gemma: using thinking as content (model=%s host=%s)",
-                _model,
-                _host,
-            )
-            return thinking
-        return None
-
-    # Unexpected non-string content; log and treat as failure.
-    logger.warning(
-        "gemma: non-string chat content (model=%s host=%s type=%s value=%r)",
-        _model,
-        _host,
-        type(content).__name__,
-        content,
-    )
     return None
 
 
@@ -187,7 +192,7 @@ async def flag(request_id: str, sections: list[Section]) -> None:
     try:
         await _wait_for_idle()
         user = prompts.flagging_user(sections)
-        raw = await _chat(prompts.FLAGGING_SYSTEM, user)
+        raw = await _chat_flagging(prompts.FLAGGING_SYSTEM, user, log_request_id=request_id)
         if raw is None:
             return
         flags = parse_flags(raw)
@@ -207,15 +212,12 @@ async def flag_for_section(request_id: str, section: Section) -> None:
     try:
         await _wait_for_idle()
         user = prompts.flagging_user([section])
-        raw = await _chat(prompts.FLAGGING_SYSTEM, user)
-        if raw is not None:
-            preview = raw.strip().replace("\n", "\\n")
-            logger.info(
-                "gemma: flagging raw request_id=%s index=%s raw=%s",
-                request_id,
-                section.index,
-                preview[:2000],
-            )
+        raw = await _chat_flagging(
+            prompts.FLAGGING_SYSTEM,
+            user,
+            log_request_id=request_id,
+            log_section_index=section.index,
+        )
         if raw is None:
             await ws_manager.send(GemmaFlags(requestId=request_id, flags=[]))
             return
