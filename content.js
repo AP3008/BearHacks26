@@ -1,14 +1,18 @@
-console.log("GitHub extension loaded");
+console.log("GitHub Enhancer Loaded");
 
-const btn = document.createElement("button");
-btn.innerText = "Test Button";
-btn.style.position = "fixed";
-btn.style.top = "20px";
-btn.style.right = "20px";
-btn.style.zIndex = "9999";
+// Find repo title
+const repoName = document.querySelector("strong a");
 
-btn.onclick = () => {
-  alert("It works!");
-};
+if (repoName) {
+  const btn = document.createElement("button");
+  btn.innerText = "📋 Copy Repo";
+  btn.className = "gh-copy-btn";
 
-document.body.appendChild(btn);
+  btn.onclick = () => {
+    navigator.clipboard.writeText(repoName.innerText);
+    btn.innerText = "✅ Copied!";
+    setTimeout(() => (btn.innerText = "📋 Copy Repo"), 1500);
+  };
+
+  repoName.parentElement.appendChild(btn);
+}
