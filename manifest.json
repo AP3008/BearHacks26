@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Enhancer",
+  "version": "1.0",
+  "description": "Adds features to GitHub UI",
+  "permissions": ["scripting"],
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+}
