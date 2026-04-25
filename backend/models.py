@@ -143,7 +143,19 @@ class RequestSuggestion(BaseModel):
     sectionIndex: int
 
 
+class ResetCanonical(BaseModel):
+    type: Literal["reset_canonical"]
+
+
 InboundMessage = Annotated[
-    Union[Approve, ApproveModified, Cancel, ModeChange, PauseToggle, RequestSuggestion],
+    Union[
+        Approve,
+        ApproveModified,
+        Cancel,
+        ModeChange,
+        PauseToggle,
+        RequestSuggestion,
+        ResetCanonical,
+    ],
     Field(discriminator="type"),
 ]

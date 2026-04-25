@@ -105,13 +105,21 @@ function reducer(state: AppState, action: Action): AppState {
       if (incoming && isMainConversationRequest(incoming)) {
         const sameId = state.currentRequest?.requestId === incoming.requestId;
         if (!sameId) {
+          // tool_chain steps within a top-level turn must preserve the
+          // user's in-flight edits — backend canonical already reflects
+          // committed deletes, but a section the user *was* editing in
+          // Monaco should keep its uncommitted text. Only top_level boundaries
+          // signal "new turn, start clean."
+          const isTopLevel = (incoming.kind ?? "top_level") === "top_level";
           next.currentRequest = buildCurrentRequest(incoming, isHeld);
-          next.gemmaFlagsByIndex = {};
-          next.gemmaSuggestionsByIndex = {};
-          next.pendingSuggestionIndices = new Set();
-          next.removedIndices = new Set();
-          next.editedSections = new Map();
-          next.editorOpenForIndex = null;
+          if (isTopLevel) {
+            next.gemmaFlagsByIndex = {};
+            next.gemmaSuggestionsByIndex = {};
+            next.pendingSuggestionIndices = new Set();
+            next.removedIndices = new Set();
+            next.editedSections = new Map();
+            next.editorOpenForIndex = null;
+          }
         } else if (state.currentRequest && state.currentRequest.held !== isHeld) {
           next.currentRequest = { ...state.currentRequest, held: isHeld };
         }
@@ -138,6 +146,16 @@ function reducer(state: AppState, action: Action): AppState {
         return { ...state, pendingQueue: [...state.pendingQueue, msg] };
       }
       const isHeld = msg.held ?? state.mode === "ask_permission";
+      const isTopLevel = (msg.kind ?? "top_level") === "top_level";
+      // tool_chain continuations preserve in-flight edits / Gemma flags so a
+      // section the user was mid-editing in Monaco doesn't lose its text the
+      // moment the next step arrives. top_level prompts always start clean.
+      if (!isTopLevel) {
+        return {
+          ...state,
+          currentRequest: buildCurrentRequest(msg, isHeld),
+        };
+      }
       return {
         ...state,
         currentRequest: buildCurrentRequest(msg, isHeld),
@@ -207,7 +225,12 @@ function reducer(state: AppState, action: Action): AppState {
     case "edit_section": {
       const next = new Map(state.editedSections);
       next.set(action.index, action.content);
-      return { ...state, editedSections: next };
+      // Drop the stale Gemma flag for this section — its highlights point
+      // at character offsets in the old `rawContent` and would visually
+      // misalign on the edited text.
+      const nextFlags = { ...state.gemmaFlagsByIndex };
+      delete nextFlags[action.index];
+      return { ...state, editedSections: next, gemmaFlagsByIndex: nextFlags };
     }
     case "open_editor":
       return { ...state, editorOpenForIndex: action.index };
@@ -291,9 +314,13 @@ export default function App() {
   const senders = useWebSocket({
     onNewRequest: (msg: NewRequest) => {
       // Auxiliary calls (no tools) get filtered inside the reducer; only
-      // clear marks/undo when the chart is actually about to change.
+      // clear marks/undo when the chart is actually about to change AND
+      // we're crossing a top_level boundary. Within a top_level turn,
+      // tool_chain steps keep the undo stack so Cmd+Z still reverts edits
+      // made earlier in the turn.
       const cur = stateRef.current;
       const isMain = msg.sections.some((s) => s.sectionType === "tool_def");
+      const isTopLevel = (msg.kind ?? "top_level") === "top_level";
       const willReplace =
         isMain &&
         !(
@@ -303,7 +330,7 @@ export default function App() {
         ) &&
         (!cur.currentRequest || cur.currentRequest.requestId !== msg.requestId);
       dispatch({ type: "new_request", msg });
-      if (willReplace) {
+      if (willReplace && isTopLevel) {
         selection.clearAll();
         undo.clear();
       }
@@ -317,11 +344,12 @@ export default function App() {
       const incoming = msg.pendingRequest ?? msg.latestRequest ?? null;
       const isMain =
         !!incoming && incoming.sections.some((s) => s.sectionType === "tool_def");
+      const isTopLevel = (incoming?.kind ?? "top_level") === "top_level";
       const replacingRequest =
         isMain &&
         (!cur.currentRequest || cur.currentRequest.requestId !== incoming!.requestId);
       dispatch({ type: "snapshot", msg });
-      if (replacingRequest) {
+      if (replacingRequest && isTopLevel) {
         selection.clearAll();
         undo.clear();
       }
@@ -350,7 +378,12 @@ export default function App() {
   }, [state.currentRequest, state.removedIndices, state.editedSections]);
 
   // Empty-conversation guard (§7.3): block deletion that would empty the
-  // request or leave only the lone original user message.
+  // request or leave only the lone original user message. Also block
+  // deletes that would leave a `tool_result` user message (sectionType
+  // "tool_output") with no preceding `tool_use` assistant message — that's
+  // a 400 from Anthropic ("orphan tool_result"), so we must catch it
+  // *before* the user commits the delete to canonical, where it would
+  // poison every future request until they hit Reset edits.
   const canDelete = useCallback(
     (toDelete: Iterable<number>) => {
       const cr = state.currentRequest;
@@ -359,8 +392,19 @@ export default function App() {
       for (const i of toDelete) removed.add(i);
       const remaining = cr.sections.filter((s) => !removed.has(s.index));
       if (remaining.length === 0) return false;
-      // If only the very first user message remains (per §7.3), we let the
-      // user delete other things but never that one.
+      // Orphan check: walk remaining in order, ensure cumulative tool_call
+      // count never falls below cumulative tool_output count. (Approximate —
+      // we can't match by tool_use_id since rawContent doesn't carry it
+      // structured — but conservatively correct.)
+      let calls = 0;
+      let outputs = 0;
+      for (const s of remaining) {
+        if (s.sectionType === "tool_call") calls += 1;
+        if (s.sectionType === "tool_output") {
+          outputs += 1;
+          if (outputs > calls) return false;
+        }
+      }
       return true;
     },
     [state.currentRequest, state.removedIndices],
@@ -627,6 +671,17 @@ export default function App() {
         }}
         onSend={onSend}
         onUndo={handleUndo}
+        onResetEdits={() => {
+          // Confirmation here, not in StatusBar, so the StatusBar stays a
+          // dumb presentational component.
+          if (
+            window.confirm(
+              "Clear all saved edits? Future requests will start from Claude Code's full context again. This cannot be undone.",
+            )
+          ) {
+            senders.sendResetCanonical();
+          }
+        }}
       />
     </div>
   );

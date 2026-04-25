@@ -1,7 +1,7 @@
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
 import { motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { GemmaFlag, GemmaSuggestion, Section } from "../types";
 import "./EditorPanel.css";
 
@@ -175,13 +175,11 @@ export function EditorPanel({
   const editorRef = useRef<monacoNs.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
-  const [draftContent, setDraftContent] = useState(content);
 
   const language = useMemo(() => languageFor(section), [section]);
-  const isDirty = draftContent !== content;
   const tokenEstimate = useMemo(
-    () => Math.max(1, Math.ceil(draftContent.length / 4)),
-    [draftContent],
+    () => Math.max(1, Math.ceil(content.length / 4)),
+    [content],
   );
 
   const handleMount: OnMount = useCallback(
@@ -247,8 +245,8 @@ export function EditorPanel({
       return;
     }
     const newDecorations: monacoNs.editor.IModelDeltaDecoration[] = resolvedHighlights.map((h) => {
-      const start = Math.max(0, Math.min(h.start, draftContent.length));
-      const end = Math.max(start, Math.min(h.end, draftContent.length));
+      const start = Math.max(0, Math.min(h.start, content.length));
+      const end = Math.max(start, Math.min(h.end, content.length));
       const startPos = model.getPositionAt(start);
       const endPos = model.getPositionAt(end);
       return {
@@ -271,19 +269,20 @@ export function EditorPanel({
       decorationsRef.current,
       newDecorations,
     );
-  }, [resolvedHighlights, draftContent]);
+  }, [resolvedHighlights, content]);
 
+  // Live-edit: every Monaco change (typing, paste, click-to-accept Gemma
+  // highlight via executeEdits) commits straight to parent state. Previously
+  // we kept a local `draftContent` and only committed on Save click — closing
+  // the panel, switching sections, or clicking Send silently dropped edits,
+  // which violated the product's "what's in the editor is what gets sent"
+  // promise.
   const onEditorChange = useCallback(
     (value: string | undefined) => {
-      const text = value ?? "";
-      setDraftContent(text);
+      onSave(value ?? "");
     },
-    [],
+    [onSave],
   );
-
-  const saveDraft = useCallback(() => {
-    onSave(draftContent);
-  }, [draftContent, onSave]);
 
   return (
     <motion.aside
@@ -313,14 +312,6 @@ export function EditorPanel({
               read-only · delete to skip
             </span>
           )}
-          <button
-            className="btn primary"
-            onClick={saveDraft}
-            type="button"
-            disabled={!isDirty || section.sectionType === "tool_def"}
-          >
-            Save
-          </button>
           <button className="btn danger" onClick={onDelete} type="button">
             Delete section
           </button>
@@ -333,7 +324,7 @@ export function EditorPanel({
         <Editor
           height="100%"
           language={language}
-          value={draftContent}
+          value={content}
           onMount={handleMount}
           onChange={onEditorChange}
           theme="contextlens"
@@ -348,6 +339,7 @@ export function EditorPanel({
               horizontalScrollbarSize: 10,
             },
             lineHeight: 19,
+            readOnly: section.sectionType === "tool_def",
           }}
         />
         {gemmaAvailable && suggestionPending && (

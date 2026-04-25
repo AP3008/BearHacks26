@@ -83,6 +83,9 @@ export function useWebSocket(handlers: Handlers) {
       sendRequestSuggestion(requestId: string, sectionIndex: number) {
         api.postMessage({ type: "request_suggestion", requestId, sectionIndex });
       },
+      sendResetCanonical() {
+        api.postMessage({ type: "reset_canonical" });
+      },
     };
   }, []);
 }
