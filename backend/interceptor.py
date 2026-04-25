@@ -145,6 +145,7 @@ async def handle(request: Request) -> Response:
 
     raw = await request.body()
     headers = dict(request.headers)
+    bb_ingest.set_user_key(headers.get("x-contextlens-user", "local"))
 
     try:
         body: dict[str, Any] = json.loads(raw)

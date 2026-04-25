@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 _memory_id_by_key: dict[str, str] = {}
 _session_id: str = ""
+_user_key: str = "local"
+_conversation_id: str = ""
+_thread_id_by_conversation: dict[str, str] = {}
 _ingest_lock = asyncio.Lock()
 
 
@@ -24,11 +28,46 @@ def get_session_id() -> str:
     return _session_id
 
 
+def get_conversation_id() -> str:
+    return _conversation_id
+
+
+def get_user_key() -> str:
+    return _user_key
+
+
+def _conversation_key(*, user_key: str, conversation_id: str) -> str:
+    return f"{user_key}\x00{conversation_id}"
+
+
+async def _ensure_thread_id(*, user_key: str, conversation_id: str) -> str:
+    """Create/cache a Backboard thread per (user, conversation)."""
+    key = _conversation_key(user_key=user_key, conversation_id=conversation_id)
+    cached = _thread_id_by_conversation.get(key)
+    if cached:
+        return cached
+    tid = await client.create_thread(
+        thread_metadata={"user_key": user_key, "conversation_id": conversation_id}
+    )
+    if not tid:
+        return ""
+    _thread_id_by_conversation[key] = tid
+    return tid
+
+
+def set_user_key(user_key: str) -> None:
+    global _user_key
+    user_key = (user_key or "").strip() or "local"
+    _user_key = user_key
+
+
 def rotate_session() -> None:
     """New proxy-side session namespace (Claude restart or explicit reset)."""
-    global _session_id, _memory_id_by_key
+    global _session_id, _conversation_id, _memory_id_by_key, _thread_id_by_conversation
     _session_id = uuid.uuid4().hex
+    _conversation_id = _session_id
     _memory_id_by_key = {}
+    _thread_id_by_conversation = {}
     logger.info("backboard: new session_id=%s", _session_id[:12] + "…")
 
 
@@ -86,6 +125,9 @@ async def _tombstone_key(message_key: str) -> None:
         memory_id=memory_id,
         content="[removed]",
         metadata={
+            "user_key": _user_key,
+            "conversation_id": _conversation_id,
+            "thread_id": "",
             "session_id": _session_id,
             "message_key": message_key,
             "kind": "canonical_message",
@@ -103,6 +145,7 @@ async def _add_canonical_slot(
     raw_text: str,
     request_id: str,
 ) -> None:
+    thread_id = await _ensure_thread_id(user_key=_user_key, conversation_id=_conversation_id)
     message_key = slot_message_key(
         session_id=_session_id,
         index=index,
@@ -116,6 +159,9 @@ async def _add_canonical_slot(
     mid = await client.add_memory(
         content=text,
         metadata={
+            "user_key": _user_key,
+            "conversation_id": _conversation_id,
+            "thread_id": thread_id,
             "session_id": _session_id,
             "message_key": message_key,
             "kind": "canonical_message",
@@ -154,6 +200,9 @@ async def _ingest_raw_incoming(body: dict[str, Any], request_id: str) -> None:
     await client.add_memory(
         content=summary,
         metadata={
+            "user_key": _user_key,
+            "conversation_id": _conversation_id,
+            "thread_id": await _ensure_thread_id(user_key=_user_key, conversation_id=_conversation_id),
             "session_id": _session_id,
             "kind": "raw_incoming",
             "request_id": request_id,
@@ -225,6 +274,9 @@ async def _record_edit_event(
     await client.add_memory(
         content=f"[edit_event] {summary}",
         metadata={
+            "user_key": _user_key,
+            "conversation_id": _conversation_id,
+            "thread_id": await _ensure_thread_id(user_key=_user_key, conversation_id=_conversation_id),
             "session_id": _session_id,
             "kind": "edit_event",
             "request_id": request_id,

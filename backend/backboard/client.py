@@ -122,3 +122,27 @@ async def search_memories(*, query: str, limit: int) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     return [m for m in raw if isinstance(m, dict)]
+
+
+async def create_thread(*, thread_metadata: dict[str, Any] | None = None) -> Optional[str]:
+    """Create a Backboard thread under the configured assistant.
+
+    Threads are useful for keeping conversations separated per user/session.
+    """
+    c = _client_or_none()
+    if c is None:
+        return None
+    payload: dict[str, Any] = {}
+    if thread_metadata:
+        payload["metadata"] = thread_metadata
+    resp = await c.post(f"/assistants/{_assistant_id}/threads", json=payload)
+    if resp.status_code not in (200, 201):
+        logger.warning(
+            "backboard: create_thread HTTP %s body=%s",
+            resp.status_code,
+            (resp.text or "")[:400],
+        )
+        return None
+    data = resp.json()
+    tid = data.get("thread_id") or data.get("id")
+    return tid if isinstance(tid, str) else None

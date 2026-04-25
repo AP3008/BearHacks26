@@ -19,6 +19,8 @@ async def fetch_prior_memories(section_text: str) -> list[dict[str, Any]]:
     sid = ingest.get_session_id()
     if not sid:
         return []
+    user_key = ingest.get_user_key()
+    conversation_id = ingest.get_conversation_id()
     try:
         limit = int(os.getenv("BACKBOARD_SEARCH_LIMIT", "5"))
     except ValueError:
@@ -33,6 +35,8 @@ async def fetch_prior_memories(section_text: str) -> list[dict[str, Any]]:
         if md.get("deleted") is True:
             continue
         if md.get("kind") != "canonical_message":
+            continue
+        if md.get("user_key") != user_key or md.get("conversation_id") != conversation_id:
             continue
         if md.get("session_id") != sid:
             continue
