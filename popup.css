@@ -1,0 +1,20 @@
+body {
+  font-family: Arial, sans-serif;
+  padding: 10px;
+  width: 200px;
+}
+
+h2 {
+  font-size: 16px;
+}
+
+button {
+  width: 100%;
+  padding: 8px;
+  margin-top: 10px;
+  background: black;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
