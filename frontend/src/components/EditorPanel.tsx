@@ -2,20 +2,35 @@ import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GemmaFlag, Section } from "../types";
+import type { GemmaFlag, GemmaSuggestion, Section } from "../types";
 import "./EditorPanel.css";
 
 interface Props {
   section: Section;
   content: string;
   gemmaFlag: GemmaFlag | undefined;
+  // Per-section suggestion fired on demand when this editor opens. Carries
+  // character-range highlights with their own per-range `reason` strings.
+  suggestion: GemmaSuggestion | undefined;
+  // True while we're waiting on a suggestion response. Drives the spinner.
+  // Without this prop, the spinner used to show whenever no flag existed,
+  // which lied to the user about Gemma "still analyzing" forever.
+  suggestionPending: boolean;
+  gemmaAvailable: boolean;
   onSave: (text: string) => void;
   onDelete: () => void;
   onClose: () => void;
 }
 
+interface DecoratedHighlight {
+  start: number;
+  end: number;
+  reason: string;
+}
+
 const TYPE_LABEL: Record<string, string> = {
   system: "System prompt",
+  tool_def: "Tool definition",
   user: "User message",
   assistant: "Assistant response",
   tool_call: "Tool call",
@@ -150,6 +165,9 @@ export function EditorPanel({
   section,
   content,
   gemmaFlag,
+  suggestion,
+  suggestionPending,
+  gemmaAvailable,
   onSave,
   onDelete,
   onClose,
@@ -198,47 +216,62 @@ export function EditorPanel({
     [],
   );
 
-  // Apply Gemma decorations whenever flags or draft content shift.
+  // Resolved highlight set: prefer the on-demand suggestion (richer, has a
+  // reason per range), fall back to whatever the broad-flagging pass found.
+  // Either way each highlight carries its own reason string for hover.
+  const resolvedHighlights = useMemo<DecoratedHighlight[]>(() => {
+    if (suggestion && suggestion.highlights.length > 0) {
+      return suggestion.highlights.map((h) => ({
+        start: h.start,
+        end: h.end,
+        reason: h.reason || "Gemma suggests removing this.",
+      }));
+    }
+    if (gemmaFlag && gemmaFlag.highlights.length > 0) {
+      return gemmaFlag.highlights.map((h) => ({
+        start: h.start,
+        end: h.end,
+        reason: gemmaFlag.reason,
+      }));
+    }
+    return [];
+  }, [suggestion, gemmaFlag]);
+
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
     const model = editor.getModel();
-    if (!model) {
+    if (!model || resolvedHighlights.length === 0) {
       decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
       return;
     }
-    if (!gemmaFlag || gemmaFlag.highlights.length === 0) {
-      decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
-      return;
-    }
-    const newDecorations: monacoNs.editor.IModelDeltaDecoration[] = gemmaFlag.highlights
-      .map((h) => {
-        const start = Math.max(0, Math.min(h.start, draftContent.length));
-        const end = Math.max(start, Math.min(h.end, draftContent.length));
-        const startPos = model.getPositionAt(start);
-        const endPos = model.getPositionAt(end);
-        return {
-          range: new monaco.Range(
-            startPos.lineNumber,
-            startPos.column,
-            endPos.lineNumber,
-            endPos.column,
-          ),
-          options: {
-            className: "gemma-highlight",
-            inlineClassName: "gemma-highlight-inline",
-            hoverMessage: { value: gemmaFlag.reason },
-            stickiness:
-              monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          },
-        };
-      });
+    const newDecorations: monacoNs.editor.IModelDeltaDecoration[] = resolvedHighlights.map((h) => {
+      const start = Math.max(0, Math.min(h.start, draftContent.length));
+      const end = Math.max(start, Math.min(h.end, draftContent.length));
+      const startPos = model.getPositionAt(start);
+      const endPos = model.getPositionAt(end);
+      return {
+        range: new monaco.Range(
+          startPos.lineNumber,
+          startPos.column,
+          endPos.lineNumber,
+          endPos.column,
+        ),
+        options: {
+          className: "gemma-highlight",
+          inlineClassName: "gemma-highlight-inline",
+          hoverMessage: { value: h.reason },
+          stickiness:
+            monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+        },
+      };
+    });
     decorationsRef.current = editor.deltaDecorations(
       decorationsRef.current,
       newDecorations,
     );
-  }, [gemmaFlag, draftContent]);
+  }, [resolvedHighlights, draftContent]);
 
   const onEditorChange = useCallback(
     (value: string | undefined) => {
@@ -272,11 +305,19 @@ export function EditorPanel({
           </span>
         </div>
         <div className="editor-head-right">
+          {section.sectionType === "tool_def" && (
+            <span
+              className="muted"
+              title="Tool definitions are structured objects; free-form text edits can't round-trip back into Anthropic's tools[] schema. You can still delete the tool to skip it for this request."
+            >
+              read-only · delete to skip
+            </span>
+          )}
           <button
             className="btn primary"
             onClick={saveDraft}
             type="button"
-            disabled={!isDirty}
+            disabled={!isDirty || section.sectionType === "tool_def"}
           >
             Save
           </button>
@@ -309,10 +350,23 @@ export function EditorPanel({
             lineHeight: 19,
           }}
         />
-        {!gemmaFlag && (
+        {gemmaAvailable && suggestionPending && (
           <div className="gemma-spinner" aria-hidden="true">
             <span className="spinner-dot" />
             <span>Gemma analyzing…</span>
+          </div>
+        )}
+        {gemmaAvailable &&
+          !suggestionPending &&
+          suggestion &&
+          suggestion.highlights.length === 0 && (
+            <div className="gemma-status gemma-status-clean" aria-hidden="true">
+              <span>Gemma found nothing to trim here.</span>
+            </div>
+          )}
+        {!gemmaAvailable && (
+          <div className="gemma-status gemma-status-offline" aria-hidden="true">
+            <span>Gemma offline — no suggestions.</span>
           </div>
         )}
       </div>

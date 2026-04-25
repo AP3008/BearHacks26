@@ -3,16 +3,22 @@ import { getVsCodeApi } from "../vscode-api";
 import type {
   EditedSection,
   GemmaFlags,
+  GemmaSuggestion,
   GemmaUnavailable,
   InboundMessage,
   Mode,
   NewRequest,
+  Snapshot,
+  TimeoutWarning,
 } from "../types";
 
 interface Handlers {
   onNewRequest: (msg: NewRequest) => void;
   onGemmaFlags: (msg: GemmaFlags) => void;
+  onGemmaSuggestion?: (msg: GemmaSuggestion) => void;
   onGemmaUnavailable?: (msg: GemmaUnavailable) => void;
+  onSnapshot?: (msg: Snapshot) => void;
+  onTimeoutWarning?: (msg: TimeoutWarning) => void;
 }
 
 export function useWebSocket(handlers: Handlers) {
@@ -32,8 +38,17 @@ export function useWebSocket(handlers: Handlers) {
         case "gemma_flags":
           handlersRef.current.onGemmaFlags(data);
           break;
+        case "gemma_suggestion":
+          handlersRef.current.onGemmaSuggestion?.(data);
+          break;
         case "gemma_unavailable":
           handlersRef.current.onGemmaUnavailable?.(data);
+          break;
+        case "snapshot":
+          handlersRef.current.onSnapshot?.(data);
+          break;
+        case "timeout_warning":
+          handlersRef.current.onTimeoutWarning?.(data);
           break;
       }
     }
@@ -64,6 +79,9 @@ export function useWebSocket(handlers: Handlers) {
       },
       sendPauseToggle(paused: boolean) {
         api.postMessage({ type: "pause_toggle", paused });
+      },
+      sendRequestSuggestion(requestId: string, sectionIndex: number) {
+        api.postMessage({ type: "request_suggestion", requestId, sectionIndex });
       },
     };
   }, []);

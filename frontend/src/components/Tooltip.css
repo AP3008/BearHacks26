@@ -34,6 +34,7 @@
   display: inline-block;
 }
 .type-dot.type-system { background: var(--cl-color-system); }
+.type-dot.type-tool_def { background: var(--cl-color-tool_def); }
 .type-dot.type-user { background: var(--cl-color-user); }
 .type-dot.type-assistant { background: var(--cl-color-assistant); }
 .type-dot.type-tool_call { background: var(--cl-color-tool_call); }

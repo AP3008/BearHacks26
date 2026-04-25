@@ -17,10 +17,12 @@ from models import (
     Approve,
     ApproveModified,
     Cancel,
+    GemmaUnavailable,
     InboundMessage,
     ModeChange,
     PauseToggle,
     RequestSuggestion,
+    Snapshot,
 )
 
 load_dotenv()
@@ -36,10 +38,28 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:e4b")
 
 
+def _build_snapshot() -> Snapshot:
+    """Authoritative state replay sent to every WS client on connect. Without
+    this, opening the panel after a request was already held leaves the proxy
+    waiting forever — the user never sees the Send button."""
+    held = interceptor.held_request()
+    latest = interceptor.latest_request()
+    gating_state = gating.state()
+    return Snapshot(
+        mode=gating_state["mode"],
+        paused=gating_state["paused"],
+        gemmaAvailable=analyzer.is_available(),
+        pendingRequest=held,
+        latestRequest=latest,
+        recentRequests=interceptor.recent_history(),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     forwarder.configure(ANTHROPIC_UPSTREAM_URL)
     analyzer.configure(OLLAMA_HOST, OLLAMA_MODEL)
+    ws_manager.register_snapshot_builder(_build_snapshot)
     await forwarder.startup()
     await analyzer.probe()
     logger.info(

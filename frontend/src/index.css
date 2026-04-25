@@ -19,6 +19,7 @@
   --cl-accent-soft: rgba(217, 119, 58, 0.16);
 
   --cl-color-system: #d9773a;
+  --cl-color-tool_def: #b3622e;
   --cl-color-user: #f2a15b;
   --cl-color-assistant: #8f8174;
   --cl-color-tool_call: #f0c06a;

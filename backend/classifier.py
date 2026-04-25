@@ -88,6 +88,27 @@ def _preview(text: str) -> str:
     return flat[:80]
 
 
+def _tool_def_text(tool: dict) -> tuple[str, str]:
+    """Render an Anthropic tool definition as the same flat text the model
+    will see in its prompt: name, description, and the JSON input_schema.
+    Returns (preview_label, raw_text) so the frontend can show "Read tool" in
+    tooltips while still letting the user inspect/edit the full schema in the
+    editor.
+
+    Spec: https://docs.anthropic.com/en/api/messages — `tools` array entries.
+    """
+    name = tool.get("name", "")
+    description = tool.get("description", "") or ""
+    schema = tool.get("input_schema", {})
+    try:
+        rendered_schema = json.dumps(schema, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        rendered_schema = str(schema)
+    raw = f"[tool {name}]\n{description}\n\ninput_schema:\n{rendered_schema}"
+    label = f"tool: {name}" if name else "tool"
+    return label, raw
+
+
 def classify(body: dict) -> tuple[list[Section], int, float, str]:
     model = body.get("model", "claude-sonnet-4-6") if isinstance(body, dict) else "claude-sonnet-4-6"
     sections: list[Section] = []
@@ -107,6 +128,29 @@ def classify(body: dict) -> tuple[list[Section], int, float, str]:
             )
         )
         next_index += 1
+
+    # Tool definitions live in `body["tools"]` (per Anthropic Messages API),
+    # not in `system` or `messages`. They typically account for thousands of
+    # tokens in Claude Code sessions and were previously invisible to the
+    # chart — meaning users paid for them but couldn't see or trim them.
+    tools = body.get("tools", []) if isinstance(body, dict) else []
+    if isinstance(tools, list):
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            label, raw = _tool_def_text(tool)
+            tokens = tokenizer.count(raw)
+            sections.append(
+                Section(
+                    index=next_index,
+                    sectionType="tool_def",
+                    tokenCount=tokens,
+                    cost=pricing.section_cost(tokens, model),
+                    contentPreview=_preview(label),
+                    rawContent=raw,
+                )
+            )
+            next_index += 1
 
     messages = body.get("messages", []) if isinstance(body, dict) else []
     if not isinstance(messages, list):

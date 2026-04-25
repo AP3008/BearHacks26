@@ -29,6 +29,28 @@ export class WebSocketBridge implements vscode.Disposable {
         this.output.appendLine("[ws] dropped outbound: socket not open");
       }
     });
+    // Force a fresh snapshot on attach. If the WS is already open, the proxy
+    // only auto-snapshots on the connect handshake — without this, opening
+    // the panel a second time leaves the chart blank until the next API call.
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.cycleConnection("re-attach: requesting fresh snapshot");
+    }
+  }
+
+  detachWebview() {
+    this.webviewSub?.dispose();
+    this.webviewSub = null;
+    this.webview = null;
+  }
+
+  private cycleConnection(reason: string) {
+    this.output.appendLine(`[ws] cycling: ${reason}`);
+    try {
+      this.ws?.close();
+    } catch {
+      // already closed
+    }
+    // The "close" handler will schedule a reconnect.
   }
 
   private connect() {

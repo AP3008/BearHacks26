@@ -42,6 +42,12 @@ export async function activate(context: vscode.ExtensionContext) {
       context.subscriptions.push(bridge);
     }
     bridge.attachWebview(panel.webview);
+    // Detach from the bridge when the panel is closed — without this, the
+    // bridge keeps trying to postMessage into a disposed webview, which
+    // silently swallows everything until the next reopen.
+    panel.onDidDispose(() => {
+      bridge?.detachWebview();
+    });
   });
 
   const restartCmd = vscode.commands.registerCommand(

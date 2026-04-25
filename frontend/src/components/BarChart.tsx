@@ -9,6 +9,63 @@ const MIN_BAR_WIDTH = 18;
 const STICK_THRESHOLD_PX = 24;
 const CHART_TOP_PAD = 28;
 const CHART_BOTTOM_PAD = 18;
+// Minimum clickable bar height. Without this, a tiny tool_call inside a
+// large stack rounds down to 1px — visible but impossible to hit, which
+// stranded users who wanted to inspect/delete those sections.
+const MIN_BAR_HEIGHT = 12;
+
+/**
+ * Distribute `targetStackPx` pixels across N sections proportionally to their
+ * token counts, while guaranteeing every bar gets at least `minPx`.
+ *
+ * Strategy: assign proportionally, clamp anything below `minPx` to `minPx`,
+ * then redistribute the deficit by shrinking the still-unclamped bars
+ * (proportionally to *their* token counts). Repeat until stable. If the stack
+ * itself is too short to fit `n × minPx`, grow it — visual fidelity at the
+ * low end loses to clickability.
+ */
+function distributeBarHeights(
+  tokens: number[],
+  targetStackPx: number,
+  minPx: number,
+): number[] {
+  const n = tokens.length;
+  if (n === 0) return [];
+  const totalTokens = tokens.reduce((sum, t) => sum + t, 0);
+  const stackPx = Math.max(targetStackPx, n * minPx);
+  if (totalTokens <= 0) return new Array(n).fill(stackPx / n);
+
+  const heights = tokens.map((t) => stackPx * (t / totalTokens));
+  const clamped = new Array(n).fill(false);
+
+  for (let iter = 0; iter < n; iter++) {
+    let didClamp = false;
+    for (let i = 0; i < n; i++) {
+      if (!clamped[i] && heights[i] < minPx) {
+        heights[i] = minPx;
+        clamped[i] = true;
+        didClamp = true;
+      }
+    }
+    if (!didClamp) break;
+
+    let clampedPx = 0;
+    let unclampedTokens = 0;
+    for (let i = 0; i < n; i++) {
+      if (clamped[i]) clampedPx += heights[i];
+      else unclampedTokens += tokens[i];
+    }
+    const remainingPx = stackPx - clampedPx;
+    if (remainingPx <= 0 || unclampedTokens <= 0) {
+      for (let i = 0; i < n; i++) if (!clamped[i]) heights[i] = minPx;
+      break;
+    }
+    for (let i = 0; i < n; i++) {
+      if (!clamped[i]) heights[i] = remainingPx * (tokens[i] / unclampedTokens);
+    }
+  }
+  return heights;
+}
 
 interface SectionStack {
   id: string;
@@ -18,7 +75,13 @@ interface SectionStack {
 }
 
 interface Props {
+  // Visible sections (post-removal, with edits applied).
   sections: Section[];
+  // Full original section list. Used purely to derive stable turn
+  // boundaries — if we let the visible list drive grouping, deleting a
+  // `user` section would dissolve its boundary and cause neighboring
+  // stacks to silently merge into one.
+  allSections: Section[];
   selectedIndices: Set<number>;
   markedForDelete: Set<number>;
   gemmaFlagsByIndex: Record<number, GemmaFlag>;
@@ -28,6 +91,7 @@ interface Props {
 
 export function BarChart({
   sections,
+  allSections,
   selectedIndices,
   markedForDelete,
   gemmaFlagsByIndex,
@@ -55,36 +119,71 @@ export function BarChart({
     return () => ro.disconnect();
   }, []);
 
-  const stacks = useMemo<SectionStack[]>(() => {
-    const result: SectionStack[] = [];
-    let current: SectionStack | null = null;
-    let turnNumber = 0;
-
-    for (const section of sections) {
-      if (section.sectionType === "user" || !current) {
-        turnNumber += section.sectionType === "user" ? 1 : 0;
-        current = {
-          id: `turn-${result.length}-${section.index}`,
-          turnNumber: Math.max(1, turnNumber),
-          sections: [],
-          tokenCount: 0,
-        };
-        result.push(current);
-      }
-      current.sections.push(section);
-      current.tokenCount += section.tokenCount;
-    }
-
-    return result;
-  }, [sections]);
-
+  // Stable turn assignment — derived from the ORIGINAL (unfiltered) section
+  // list so deleting a section never moves another section's bar. Without
+  // this, removing a `user` section would erase its boundary and the next
+  // turn would silently merge into the previous one's stack.
   const turnBySectionIndex = useMemo(() => {
-    const next: Record<number, number> = {};
-    for (const stack of stacks) {
-      for (const section of stack.sections) next[section.index] = stack.turnNumber;
+    const map: Record<number, number> = {};
+    let turn = 0;
+    let firstUserSeen = false;
+    for (const s of allSections) {
+      if (s.sectionType === "user") {
+        turn += 1;
+        firstUserSeen = true;
+      }
+      // 0 = "preamble" (system + tool_def before any user message). It's
+      // folded into turn 1 below so the chart shows N user prompts as N
+      // bars rather than N+1.
+      map[s.index] = firstUserSeen ? turn : 0;
     }
-    return next;
-  }, [stacks]);
+    return map;
+  }, [allSections]);
+
+  const stacks = useMemo<SectionStack[]>(() => {
+    // Discover which turns exist in the original list (preserves bars for
+    // turns whose only visible section happens to be the user message that
+    // was just deleted — they'd otherwise vanish).
+    let totalTurns = 0;
+    let hasPreamble = false;
+    for (const s of allSections) {
+      const t = turnBySectionIndex[s.index] ?? 0;
+      if (t === 0) hasPreamble = true;
+      else if (t > totalTurns) totalTurns = t;
+    }
+
+    const buckets = new Map<number, Section[]>();
+    if (totalTurns === 0 && hasPreamble) buckets.set(0, []);
+    for (let t = 1; t <= totalTurns; t++) buckets.set(t, []);
+
+    // Fold preamble into turn 1 if any real turns exist (system/tool_defs
+    // ride along with the first user prompt's bar).
+    const targetForPreamble = totalTurns >= 1 ? 1 : 0;
+
+    for (const s of sections) {
+      const raw = turnBySectionIndex[s.index] ?? 0;
+      const target = raw === 0 ? targetForPreamble : raw;
+      const bucket = buckets.get(target);
+      if (bucket) bucket.push(s);
+    }
+
+    const result: SectionStack[] = [];
+    const orderedKeys = Array.from(buckets.keys()).sort((a, b) => a - b);
+    for (const t of orderedKeys) {
+      const secs = buckets.get(t) ?? [];
+      // Skip turns the user emptied entirely — preserves stable bar
+      // identity for the rest, but doesn't render an empty placeholder.
+      if (secs.length === 0) continue;
+      const tokenCount = secs.reduce((sum, s) => sum + s.tokenCount, 0);
+      result.push({
+        id: `turn-${t}`,
+        turnNumber: t === 0 ? 1 : t,
+        sections: secs,
+        tokenCount,
+      });
+    }
+    return result;
+  }, [allSections, sections, turnBySectionIndex]);
 
   const count = stacks.length;
   const naturalWidth = count > 0 ? containerWidth / count : 0;
@@ -192,7 +291,13 @@ export function BarChart({
           <AnimatePresence initial={false}>
             {stacks.map((stack, stackIndex) => {
               const x = stackIndex * barWidth;
-              const stackHeight = drawableHeight * 0.9 * (stack.tokenCount / maxTokens);
+              const targetStackHeight = drawableHeight * 0.9 * (stack.tokenCount / maxTokens);
+              const heights = distributeBarHeights(
+                stack.sections.map((s) => s.tokenCount),
+                targetStackHeight,
+                MIN_BAR_HEIGHT,
+              );
+              const actualStackHeight = heights.reduce((sum, h) => sum + h, 0);
               let cursorY = CHART_TOP_PAD + drawableHeight;
               return (
                 <motion.g
@@ -205,13 +310,14 @@ export function BarChart({
                 >
                   {stack.sections.map((s, sectionIndex) => {
                     const isLast = sectionIndex === stack.sections.length - 1;
-                    const rawHeight =
-                      stack.tokenCount > 0
-                        ? stackHeight * (s.tokenCount / stack.tokenCount)
-                        : 0;
+                    // Last bar absorbs any rounding so the stack lines up
+                    // exactly with the cumulative `actualStackHeight` floor.
                     const heightPx = isLast
-                      ? Math.max(1, cursorY - (CHART_TOP_PAD + drawableHeight - stackHeight))
-                      : Math.max(1, rawHeight);
+                      ? Math.max(
+                          MIN_BAR_HEIGHT,
+                          cursorY - (CHART_TOP_PAD + drawableHeight - actualStackHeight),
+                        )
+                      : heights[sectionIndex];
                     cursorY -= heightPx;
                     return (
                       <Bar
@@ -239,7 +345,7 @@ export function BarChart({
         </svg>
         {count === 0 && (
           <div className="chart-empty">
-            <span>No removable sections — only the system prompt remains.</span>
+            <span>No sections remain in this request.</span>
           </div>
         )}
       </div>

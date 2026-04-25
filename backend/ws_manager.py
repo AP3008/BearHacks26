@@ -15,9 +15,38 @@ logger = logging.getLogger(__name__)
 _socket: Optional[WebSocket] = None
 _lock = asyncio.Lock()
 
+# Snapshot builder is registered by main.py once gating + analyzer are wired.
+# It returns a pydantic model (or dict) that fully describes proxy state, so
+# a freshly-attached panel can resume mid-flight instead of seeing a blank
+# chart and a held request frozen in the proxy.
+SnapshotBuilder = Callable[[], BaseModel | dict[str, Any] | None]
+_snapshot_builder: Optional[SnapshotBuilder] = None
+
 
 def is_connected() -> bool:
     return _socket is not None
+
+
+def register_snapshot_builder(builder: SnapshotBuilder) -> None:
+    global _snapshot_builder
+    _snapshot_builder = builder
+
+
+async def _send_snapshot(ws: WebSocket) -> None:
+    if _snapshot_builder is None:
+        return
+    try:
+        snap = _snapshot_builder()
+    except Exception:
+        logger.exception("ws: snapshot builder crashed")
+        return
+    if snap is None:
+        return
+    payload = snap.model_dump(mode="json") if isinstance(snap, BaseModel) else snap
+    try:
+        await ws.send_text(json.dumps(payload))
+    except Exception as exc:
+        logger.warning("ws: snapshot send failed: %s", exc)
 
 
 async def connect(ws: WebSocket) -> None:
@@ -33,6 +62,10 @@ async def connect(ws: WebSocket) -> None:
             pass
         logger.info("ws: superseded previous connection")
     logger.info("ws: client connected")
+    # Always replay current state — without this, a panel that opens after
+    # Claude Code already sent a request (or a panel that reconnects while a
+    # request is still held) sees nothing and the proxy hangs.
+    await _send_snapshot(ws)
 
 
 async def disconnect(ws: WebSocket) -> None:
@@ -46,7 +79,11 @@ async def disconnect(ws: WebSocket) -> None:
 async def send(message: BaseModel | dict[str, Any]) -> None:
     sock = _socket
     if sock is None:
-        logger.debug("ws: send dropped (no client)")
+        # No silent loss: anything important should be in the snapshot so a
+        # late-joining client can recover. We log at debug because Gemma
+        # flags etc. legitimately fire when no UI is attached.
+        logger.debug("ws: send dropped (no client) type=%s",
+                     getattr(message, "type", None) if isinstance(message, BaseModel) else type(message).__name__)
         return
     if isinstance(message, BaseModel):
         payload = message.model_dump(mode="json")

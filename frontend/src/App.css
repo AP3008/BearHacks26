@@ -7,10 +7,6 @@
   overflow: hidden;
 }
 
-.app-header {
-  flex: 0 0 auto;
-}
-
 .app-main {
   position: relative;
   flex: 1 1 auto;
@@ -19,7 +15,6 @@
   min-width: 0;
 }
 
-.app.with-editor .app-header,
 .app.with-editor .status-bar {
   display: none;
 }
