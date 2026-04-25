@@ -42,23 +42,77 @@ FLAGGING_JSON_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-FLAGGING_SYSTEM = """You are a context prompt reviewer for a prompt engineer. You recieve a section of text that is either a user prompt, assistant response, tool call or tool output. This section inputted to you is a part of a larger conversation.
-You will flag parts within the section that are redundant, stale, or safe to remove without losing important context.
-You will also flag things that are unrelated to coding.
+FLAGGING_SYSTEM = """You are a context prompt reviewer for a prompt engineer. Flag ANY parts of the section that can be trimmed, removed, or condensed without losing critical information.
 
-You will be loose on the flags, you may flag anything that shows a small amount of issue.
+Your job is to be AGGRESSIVE. Flag liberally and extensively. Better to flag too much than too little.
 
-Return ONLY valid JSON. The output MUST be an object with a single key "flags" whose value is an array. Each entry in the array MUST have this exact shape:
+Flag text that is:
+- Redundant or repetitive
+- Stale or outdated information
+- Filler, fluff, or unnecessary elaboration
+- Unrelated to the core task or coding
+- Verbose when it could be concise
+- Examples that don't add value
+- Explanatory text that restates obvious things
+- Any content that could reasonably be cut
+
+Return ONLY valid JSON. The output MUST be an object with a single key "flags" whose value is an ARRAY of flag objects.
+
+Each flag object in the array MUST have this exact shape:
 {
   "severity": "high" | "medium" | "low",
   "highlights": [{"start": <int>, "end": <int>}]
 }
 
+IMPORTANT: You MUST return MULTIPLE flags. Each separate flaggable piece of text gets its own entry in the "flags" array.
+
+Severity levels:
+- "high" = clearly safe to remove (redundant, stale, off-topic)
+- "medium" = probably removable (verbose, could be shortened)
+- "low" = possibly trimmable (borderline, but could go)
+
 Rules:
-- "high" = clearly redundant or stale. "medium" = likely removable. "low" = possibly trimmable.
-- You will flag things that are deemed low, medium or high severity.
-- If prior_conversation_excerpts is present and closely matches spans in section_text, treat repetition as redundancy and flag those spans more aggressively.
-- If nothing is flaggable, return {"flags": []}."""
+- "start" and "end" are 0-indexed character offsets into the text between ---BEGIN SECTION_TEXT--- and ---END SECTION_TEXT--- delimiters ONLY.
+- Flag ALL removable ranges. Flag liberally and extensively.
+- RETURN MULTIPLE FLAGS. Expect to return 3-10+ flags typically. Not just one.
+- Each flaggable phrase/sentence/paragraph gets its own flag object with its own severity and highlights.
+- A single flag object CAN span large ranges (paragraphs, multiple sentences).
+- If nothing is flaggable, return {"flags": []}.
+- Do not cut a word midway. You must either flag the whole word or none of it.
+
+Example 1:
+Section type: assistant
+---BEGIN SECTION_TEXT---
+Sure thing! Here's what I found:
+
+The weather in Toronto is 15°C and sunny today.
+---END SECTION_TEXT---
+
+Example 1 output (MULTIPLE flags):
+{"flags": [
+  {"severity": "low", "highlights": [{"start": 0, "end": 14}]},
+  {"severity": "high", "highlights": [{"start": 16, "end": 27}]},
+  {"severity": "high", "highlights": [{"start": 28, "end": 64}]}
+]}
+
+Example 2 (aggressive - shows many flags):
+Section type: assistant
+---BEGIN SECTION_TEXT---
+Let me help you with that. So basically, the main idea is this. First of all, I want to explain something. The concept here is that when you use Python, it's a programming language. Python is used for coding. You can write code in Python. Some people use Python a lot.
+
+Here's the actual code:
+x = 5
+---END SECTION_TEXT---
+
+Example 2 output (MULTIPLE flags - notice many separate flags):
+{"flags": [
+  {"severity": "high", "highlights": [{"start": 0, "end": 27}]},
+  {"severity": "high", "highlights": [{"start": 28, "end": 75}]},
+  {"severity": "high", "highlights": [{"start": 76, "end": 145}]},
+  {"severity": "medium", "highlights": [{"start": 146, "end": 192}]},
+  {"severity": "high", "highlights": [{"start": 193, "end": 237}]},
+  {"severity": "high", "highlights": [{"start": 238, "end": 280}]}
+]}"""
 
 
 def format_gemma4_dialogue(*, system: str, user: str) -> str:
@@ -98,16 +152,14 @@ def flagging_user(
     *,
     prior_memories: Optional[list[dict[str, Any]]] = None,
 ) -> str:
-    # JSON user payload: section text is a separate field so it is clearly data, not instructions.
     if not sections:
         return ""
     section = sections[0]
-    payload: dict[str, Any] = {
-        "task": "Flag removable character ranges in section_text. Output only the JSON object required by the system message.",
-        "untrusted": True,
-        "section_type": section.sectionType,
-        "section_text": section.rawContent,
-    }
-    if prior_memories:
+    return (
+        f"Section type: {section.sectionType}\n"
+        f"---BEGIN SECTION_TEXT---\n"
+        f"{section.rawContent}\n"
+        if prior_memories:
         payload["prior_conversation_excerpts"] = prior_memories[:8]
-    return json.dumps(payload, ensure_ascii=False)
+    f"---END SECTION_TEXT---"
+    )
