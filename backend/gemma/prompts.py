@@ -154,12 +154,19 @@ def flagging_user(
 ) -> str:
     if not sections:
         return ""
+
     section = sections[0]
-    return (
+    text = (
         f"Section type: {section.sectionType}\n"
         f"---BEGIN SECTION_TEXT---\n"
         f"{section.rawContent}\n"
-        if prior_memories:
-        payload["prior_conversation_excerpts"] = prior_memories[:8]
-    f"---END SECTION_TEXT---"
     )
+
+    if prior_memories:
+        text += (
+            "\nPrior conversation excerpts:\n"
+            f"{json.dumps(prior_memories[:8], ensure_ascii=False)}\n"
+        )
+
+    text += "---END SECTION_TEXT---"
+    return text
