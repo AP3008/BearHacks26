@@ -78,6 +78,9 @@ async def _chat_flagging(
     """Ollama chat with JSON Schema output. Never treats `message.thinking` as the model output."""
     if _client is None:
         return None
+    # Gemma 4 prompt formatting: explicitly separate system/user/model turns
+    # using Gemma's reserved control tokens.
+    formatted = prompts.format_gemma4_dialogue(system=system, user=user)
     try:
         async with httpx.AsyncClient(timeout=_chat_timeout_s) as client:
             resp = await asyncio.wait_for(
@@ -85,15 +88,21 @@ async def _chat_flagging(
                     f"{_host}/api/chat",
                     json={
                         "model": _model,
-                        "format": prompts.FLAGGING_JSON_SCHEMA,
+                        # Parser is already tolerant of minor JSON wrapping and
+                        # the system prompt defines the shape; avoid strict
+                        # schema enforcement unless we need it.
+                        "format": "json",
                         "options": {
                             "temperature": 0,
                             "num_predict": 256,
                         },
                         "keep_alive": "10m",
                         "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
+                            # Use a single user message containing the full
+                            # Gemma 4 formatted dialogue. This prevents any
+                            # ambiguity in how system vs user text are
+                            # separated by the serving layer.
+                            {"role": "user", "content": formatted},
                         ],
                         "stream": False,
                     },

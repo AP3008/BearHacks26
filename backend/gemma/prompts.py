@@ -56,6 +56,26 @@ Rules:
 - If nothing is flaggable, return {"flags": []}."""
 
 
+def format_gemma4_dialogue(*, system: str, user: str) -> str:
+    """Format a single-turn dialogue using Gemma 4 control tokens.
+
+    Ref: https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4
+    """
+    # IMPORTANT: We keep system/user content as-is; the separation is enforced
+    # by Gemma's reserved control tokens.
+    return "\n".join(
+        [
+            "<|turn>system",
+            system.rstrip(),
+            "<turn|>",
+            "<|turn>user",
+            user.rstrip(),
+            "<turn|>",
+            "<|turn>model",
+        ]
+    )
+
+
 def _section_for_prompt(section: Section) -> dict[str, Any]:
     base = {
         "index": section.index,
