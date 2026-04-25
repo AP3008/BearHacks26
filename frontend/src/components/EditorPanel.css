@@ -50,6 +50,7 @@
 .type-badge.type-assistant { background: var(--cl-color-assistant); color: #160d08; }
 .type-badge.type-tool_call { background: var(--cl-color-tool_call); color: #1a1100; }
 .type-badge.type-tool_output { background: var(--cl-color-tool_output); color: #fff0e8; }
+.type-badge.type-thinking { background: var(--cl-color-thinking); color: #160d08; }
 .type-badge.type-unknown {
   background: transparent;
   border: 1px solid var(--cl-color-unknown);
