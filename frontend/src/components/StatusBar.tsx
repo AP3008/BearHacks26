@@ -20,7 +20,6 @@ interface Props {
   onTogglePause: () => void;
   onSend: () => void;
   onUndo: () => void;
-  onResetEdits: () => void;
 }
 
 const HOLD_WARNING_MS = 30_000;
@@ -50,7 +49,6 @@ export function StatusBar({
   onTogglePause,
   onSend,
   onUndo,
-  onResetEdits,
 }: Props) {
   const [showWarning, setShowWarning] = useState(false);
 
@@ -163,15 +161,6 @@ export function StatusBar({
             title="Undo last deletion (Ctrl/Cmd+Z)"
           >
             Undo
-          </button>
-
-          <button
-            type="button"
-            className="btn"
-            onClick={onResetEdits}
-            title="Clear all saved edits — future requests will use Claude Code's full context"
-          >
-            Reset edits
           </button>
 
           <AnimatePresence>

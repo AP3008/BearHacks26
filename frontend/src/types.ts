@@ -116,10 +116,6 @@ export interface RequestFlagging {
   sectionIndex: number;
 }
 
-export interface ResetCanonical {
-  type: "reset_canonical";
-}
-
 export interface CommitEditsNow {
   type: "commit_edits_now";
   requestId: string;
@@ -133,7 +129,6 @@ export type OutboundMessage =
   | ModeChange
   | PauseToggle
   | RequestFlagging
-  | ResetCanonical
   | CommitEditsNow;
 
 export interface PersistedState {
