@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { GemmaFlag, Section } from "../types";
 import { Bar } from "./Bar";
@@ -176,44 +177,65 @@ export function BarChart({
           preserveAspectRatio="none"
           className="chart-svg"
         >
-          {stacks.map((stack, stackIndex) => {
-            const x = stackIndex * barWidth;
-            const stackHeight = drawableHeight * 0.9 * (stack.tokenCount / maxTokens);
-            let cursorY = CHART_TOP_PAD + drawableHeight;
+          {/* Horizontal reference lines at 25 / 50 / 75 % of peak */}
+          {chartHeight > 0 && [0.25, 0.5, 0.75].map((frac) => {
+            const gy = CHART_TOP_PAD + drawableHeight * (1 - frac * 0.9);
             return (
-              <g key={stack.id} className="stack-group">
-                {stack.sections.map((s, sectionIndex) => {
-                  const isLast = sectionIndex === stack.sections.length - 1;
-                  const rawHeight =
-                    stack.tokenCount > 0
-                      ? stackHeight * (s.tokenCount / stack.tokenCount)
-                      : 0;
-                  const heightPx = isLast
-                    ? Math.max(1, cursorY - (CHART_TOP_PAD + drawableHeight - stackHeight))
-                    : Math.max(1, rawHeight);
-                  cursorY -= heightPx;
-                  return (
-                    <Bar
-                      key={s.index}
-                      section={s}
-                      x={x}
-                      y={cursorY}
-                      width={barWidth}
-                      heightPx={heightPx}
-                      isSelected={selectedIndices.has(s.index)}
-                      isMarkedForDelete={markedForDelete.has(s.index)}
-                      gemmaFlag={gemmaFlagsByIndex[s.index]}
-                      onPointerDown={onPointerDown}
-                      onPointerEnter={onPointerEnter}
-                      onPointerLeave={onPointerLeave}
-                      onPointerMove={onPointerMove}
-                      onDoubleClick={onDoubleClick}
-                    />
-                  );
-                })}
-              </g>
+              <line
+                key={frac}
+                className="chart-grid-line"
+                x1={0} x2={innerWidth}
+                y1={gy} y2={gy}
+              />
             );
           })}
+          <AnimatePresence initial={false}>
+            {stacks.map((stack, stackIndex) => {
+              const x = stackIndex * barWidth;
+              const stackHeight = drawableHeight * 0.9 * (stack.tokenCount / maxTokens);
+              let cursorY = CHART_TOP_PAD + drawableHeight;
+              return (
+                <motion.g
+                  key={stack.id}
+                  className="stack-group"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14 }}
+                >
+                  {stack.sections.map((s, sectionIndex) => {
+                    const isLast = sectionIndex === stack.sections.length - 1;
+                    const rawHeight =
+                      stack.tokenCount > 0
+                        ? stackHeight * (s.tokenCount / stack.tokenCount)
+                        : 0;
+                    const heightPx = isLast
+                      ? Math.max(1, cursorY - (CHART_TOP_PAD + drawableHeight - stackHeight))
+                      : Math.max(1, rawHeight);
+                    cursorY -= heightPx;
+                    return (
+                      <Bar
+                        key={s.index}
+                        section={s}
+                        x={x}
+                        y={cursorY}
+                        width={barWidth}
+                        heightPx={heightPx}
+                        isSelected={selectedIndices.has(s.index)}
+                        isMarkedForDelete={markedForDelete.has(s.index)}
+                        gemmaFlag={gemmaFlagsByIndex[s.index]}
+                        onPointerDown={onPointerDown}
+                        onPointerEnter={onPointerEnter}
+                        onPointerLeave={onPointerLeave}
+                        onPointerMove={onPointerMove}
+                        onDoubleClick={onDoubleClick}
+                      />
+                    );
+                  })}
+                </motion.g>
+              );
+            })}
+          </AnimatePresence>
         </svg>
         {count === 0 && (
           <div className="chart-empty">

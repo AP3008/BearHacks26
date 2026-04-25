@@ -16,13 +16,12 @@
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  min-width: 0;
 }
 
-.app.with-editor .bar-chart {
-  /* Editor is absolutely positioned — chart stays beneath but remains clickable
-   * on the visible left side. The 46% reservation matches EditorPanel's width
-   * clamp's middle, which keeps interactive bars accessible without reflow. */
-  padding-right: 0;
+.app.with-editor .app-header,
+.app.with-editor .status-bar {
+  display: none;
 }
 
 .app.empty {

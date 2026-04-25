@@ -1,3 +1,4 @@
+import { AnimatePresence, animate, motion, useMotionValue, useTransform } from "motion/react";
 import { useEffect, useState } from "react";
 import type { Mode } from "../types";
 import "./StatusBar.css";
@@ -55,31 +56,64 @@ export function StatusBar({
     };
   }, [held]);
 
+  // Spring-animated token and cost counters.
+  const tokensMV = useMotionValue(totalTokens);
+  useEffect(() => {
+    const ctrl = animate(tokensMV, totalTokens, { type: "spring", stiffness: 55, damping: 18 });
+    return () => ctrl.stop();
+  }, [totalTokens, tokensMV]);
+  const displayTokens = useTransform(tokensMV, (v) => formatTokens(Math.round(v)));
+
+  const costMV = useMotionValue(totalCost);
+  useEffect(() => {
+    const ctrl = animate(costMV, totalCost, { type: "spring", stiffness: 55, damping: 18 });
+    return () => ctrl.stop();
+  }, [totalCost, costMV]);
+  const displayCost = useTransform(costMV, (v) => formatCost(v));
+
   return (
     <footer className="status-bar">
-      {showWarning && held && (
-        <div className="warning-banner" role="alert">
-          <span className="warning-icon" aria-hidden="true">!</span>
-          Claude Code may timeout. Send or cancel.
-        </div>
-      )}
-      {gemmaUnavailable && (
-        <div className="gemma-notice" role="status">
-          Install Ollama + Gemma 4 for smart suggestions.
-        </div>
-      )}
+      <AnimatePresence>
+        {showWarning && held && (
+          <motion.div
+            className="warning-banner"
+            role="alert"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18 }}
+          >
+            <span className="warning-icon" aria-hidden="true">!</span>
+            Claude Code may timeout. Send or cancel.
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {gemmaUnavailable && (
+          <motion.div
+            className="gemma-notice"
+            role="status"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18 }}
+          >
+            Install Ollama + Gemma 4 for smart suggestions.
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="status-row">
         <div className="status-stats">
           <span className="stat">
             <span className="stat-label">Tokens</span>
             <span className="stat-value">
-              {formatTokens(totalTokens)}
+              <motion.span>{displayTokens}</motion.span>
               {hasEdits && <span className="estimate"> est</span>}
             </span>
           </span>
           <span className="stat">
             <span className="stat-label">Cost</span>
-            <span className="stat-value">${formatCost(totalCost)}</span>
+            <span className="stat-value">$<motion.span>{displayCost}</motion.span></span>
           </span>
         </div>
 
@@ -109,9 +143,7 @@ export function StatusBar({
             type="button"
             className={`btn ${paused ? "active" : ""}`}
             onClick={onTogglePause}
-            title={
-              paused ? "Paused — next prompt will be held" : "Pause next prompt"
-            }
+            title={paused ? "Paused — next prompt will be held" : "Pause next prompt"}
           >
             {paused ? "Paused — next prompt held" : "Pause"}
           </button>
@@ -126,16 +158,22 @@ export function StatusBar({
             Undo
           </button>
 
-          {held && (
-            <button
-              type="button"
-              className="btn primary send"
-              onClick={onSend}
-              autoFocus
-            >
-              Send
-            </button>
-          )}
+          <AnimatePresence>
+            {held && (
+              <motion.button
+                type="button"
+                className="btn primary send"
+                onClick={onSend}
+                autoFocus
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ type: "spring", stiffness: 300, damping: 24 }}
+              >
+                Send
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </footer>

@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from "motion/react";
 import type { GemmaFlag, Section } from "../types";
 import "./Tooltip.css";
 
@@ -36,37 +37,46 @@ function clampToViewport(anchor: { x: number; y: number }) {
 }
 
 export function Tooltip({ section, gemmaFlag, turnNumber, anchor }: Props) {
-  if (!section || !anchor) return null;
-  const pos = clampToViewport(anchor);
+  const show = !!(section && anchor);
+  const pos = show ? clampToViewport(anchor!) : { x: 0, y: 0 };
 
   return (
-    <div
-      className="tooltip"
-      style={{ left: pos.x, top: pos.y }}
-      role="tooltip"
-    >
-      <div className="tooltip-row tooltip-type">
-        <span className={`type-dot type-${section.sectionType}`} />
-        {TYPE_LABEL[section.sectionType] ?? section.sectionType}
-      </div>
-      <div className="tooltip-row">
-        <span className="tooltip-key">Tokens</span>
-        <span className="tooltip-val">{formatTokens(section.tokenCount)}</span>
-      </div>
-      <div className="tooltip-row">
-        <span className="tooltip-key">Cost</span>
-        <span className="tooltip-val">{formatCost(section.cost)}</span>
-      </div>
-      <div className="tooltip-row">
-        <span className="tooltip-key">Turn</span>
-        <span className="tooltip-val">{turnNumber}</span>
-      </div>
-      <div className="tooltip-preview">{section.contentPreview}</div>
-      {gemmaFlag && (
-        <div className={`tooltip-flag severity-${gemmaFlag.severity}`}>
-          <span className="flag-label">Gemma</span> {gemmaFlag.reason}
-        </div>
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          key={section!.index}
+          className="tooltip"
+          style={{ left: pos.x, top: pos.y }}
+          role="tooltip"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 6 }}
+          transition={{ duration: 0.1, ease: "easeOut" }}
+        >
+          <div className="tooltip-row tooltip-type">
+            <span className={`type-dot type-${section!.sectionType}`} />
+            {TYPE_LABEL[section!.sectionType] ?? section!.sectionType}
+          </div>
+          <div className="tooltip-row">
+            <span className="tooltip-key">Tokens</span>
+            <span className="tooltip-val">{formatTokens(section!.tokenCount)}</span>
+          </div>
+          <div className="tooltip-row">
+            <span className="tooltip-key">Cost</span>
+            <span className="tooltip-val">{formatCost(section!.cost)}</span>
+          </div>
+          <div className="tooltip-row">
+            <span className="tooltip-key">Turn</span>
+            <span className="tooltip-val">{turnNumber}</span>
+          </div>
+          <div className="tooltip-preview">{section!.contentPreview}</div>
+          {gemmaFlag && (
+            <div className={`tooltip-flag severity-${gemmaFlag.severity}`}>
+              <span className="flag-label">Gemma</span> {gemmaFlag.reason}
+            </div>
+          )}
+        </motion.div>
       )}
-    </div>
+    </AnimatePresence>
   );
 }

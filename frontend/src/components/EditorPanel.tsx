@@ -1,5 +1,6 @@
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type * as monacoNs from "monaco-editor";
+import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GemmaFlag, Section } from "../types";
 import "./EditorPanel.css";
@@ -252,7 +253,14 @@ export function EditorPanel({
   }, [draftContent, onSave]);
 
   return (
-    <aside className="editor-panel" aria-label="Section editor">
+    <motion.aside
+      className="editor-panel"
+      aria-label="Section editor"
+      initial={{ x: "6%", opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: "6%", opacity: 0 }}
+      transition={{ type: "spring", stiffness: 380, damping: 36 }}
+    >
       <header className="editor-head">
         <div className="editor-head-left">
           <span className={`type-badge type-${section.sectionType}`}>
@@ -292,13 +300,13 @@ export function EditorPanel({
             minimap: { enabled: false },
             wordWrap: "on",
             scrollBeyondLastLine: false,
-            fontSize: 15,
+            fontSize: 13,
             renderWhitespace: "selection",
             scrollbar: {
               verticalScrollbarSize: 10,
               horizontalScrollbarSize: 10,
             },
-            lineHeight: 22,
+            lineHeight: 19,
           }}
         />
         {!gemmaFlag && (
@@ -308,6 +316,6 @@ export function EditorPanel({
           </div>
         )}
       </div>
-    </aside>
+    </motion.aside>
   );
 }

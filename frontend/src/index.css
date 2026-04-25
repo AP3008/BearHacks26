@@ -38,8 +38,8 @@
     "SF Mono", Consolas, "Courier New", monospace;
 
   font-family: var(--cl-font-ui);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--cl-text);
   background: var(--cl-bg);
   -webkit-font-smoothing: antialiased;
@@ -85,8 +85,8 @@ code,
   border: 1px solid var(--cl-border);
   background: rgba(10, 9, 8, 0.82);
   color: var(--cl-text);
-  padding: 7px 12px;
-  font-size: 13px;
+  padding: 5px 9px;
+  font-size: 12px;
   border-radius: 1px;
   cursor: pointer;
 }

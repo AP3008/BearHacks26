@@ -36,27 +36,42 @@
   fill: transparent;
 }
 
+.chart-grid-line {
+  stroke: var(--cl-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  pointer-events: none;
+}
+
 .bar-fill {
   transition:
-    filter 120ms ease,
-    opacity 120ms ease,
+    filter 140ms ease,
+    opacity 140ms ease,
     stroke-width 120ms ease;
   transform-origin: center bottom;
   transform-box: fill-box;
 }
 
 .bar-group:hover .bar-fill {
-  opacity: 0.86;
+  opacity: 0.82;
+  filter: brightness(1.12);
 }
 
 .bar-group.is-selected .bar-fill {
   stroke: var(--cl-accent-strong);
   stroke-width: 2;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cl-accent-strong) 60%, transparent));
 }
 
 .bar-group.is-marked .bar-fill {
   fill: var(--cl-color-marked);
-  opacity: 0.55;
+  opacity: 0.6;
+  animation: marked-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes marked-pulse {
+  from { opacity: 0.48; }
+  to { opacity: 0.7; }
 }
 
 .bar-strike {

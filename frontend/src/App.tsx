@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import "./App.css";
 import { BarChart } from "./components/BarChart";
@@ -385,7 +386,12 @@ export default function App() {
   if (!state.currentRequest) {
     return (
       <div className="app empty">
-        <div className="empty-card">
+        <motion.div
+          className="empty-card"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 200, damping: 28 }}
+        >
           <h1>ContextLens</h1>
           <p>Waiting for the next Claude Code API call…</p>
           <p className="hint">
@@ -393,7 +399,7 @@ export default function App() {
             <code>ANTHROPIC_BASE_URL=http://localhost:8080</code> to start
             streaming context here.
           </p>
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -410,35 +416,48 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        <BarChart
-          sections={visibleSections}
-          selectedIndices={selection.selectedIndices}
-          markedForDelete={selection.markedForDelete}
-          gemmaFlagsByIndex={state.gemmaFlagsByIndex}
-          onSelect={(index, shift) => {
-            if (shift) {
-              selection.rangeSelect(
-                index,
-                visibleSections.map((s) => s.index),
-              );
-            } else {
-              selection.select(index);
-            }
-          }}
-          onOpenEditor={(index) => dispatch({ type: "open_editor", index })}
-        />
+        <AnimatePresence mode="sync" initial={false}>
+          <motion.div
+            key={cr.requestId}
+            style={{ position: "absolute", inset: 0, display: "flex" }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+          >
+            <BarChart
+              sections={visibleSections}
+              selectedIndices={selection.selectedIndices}
+              markedForDelete={selection.markedForDelete}
+              gemmaFlagsByIndex={state.gemmaFlagsByIndex}
+              onSelect={(index, shift) => {
+                if (shift) {
+                  selection.rangeSelect(
+                    index,
+                    visibleSections.map((s) => s.index),
+                  );
+                } else {
+                  selection.select(index);
+                }
+              }}
+              onOpenEditor={(index) => dispatch({ type: "open_editor", index })}
+            />
+          </motion.div>
+        </AnimatePresence>
 
-        {editorSection && (
-          <EditorPanel
-            key={editorSection.index}
-            section={editorSection}
-            content={editorContent}
-            gemmaFlag={state.gemmaFlagsByIndex[editorSection.index]}
-            onSave={(text) => onEditSection(editorSection.index, text)}
-            onDelete={() => onDeleteFromEditor(editorSection.index)}
-            onClose={() => dispatch({ type: "close_editor" })}
-          />
-        )}
+        <AnimatePresence>
+          {editorSection && (
+            <EditorPanel
+              key={editorSection.index}
+              section={editorSection}
+              content={editorContent}
+              gemmaFlag={state.gemmaFlagsByIndex[editorSection.index]}
+              onSave={(text) => onEditSection(editorSection.index, text)}
+              onDelete={() => onDeleteFromEditor(editorSection.index)}
+              onClose={() => dispatch({ type: "close_editor" })}
+            />
+          )}
+        </AnimatePresence>
       </main>
 
       <StatusBar
