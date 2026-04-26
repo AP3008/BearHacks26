@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from fastapi import Request, Response
 
+import cache_control_cap
 import classifier
 import conversation_state
 import forwarder
@@ -132,39 +133,15 @@ async def broadcast_canonical_snapshot() -> None:
     await ws_manager.send(new_request)
 
 
-def _strip_excess_cache_control(body: dict[str, Any], max_blocks: int = 4) -> tuple[dict[str, Any], int]:
-    """Anthropic enforces a hard cap on the number of blocks containing
-    `cache_control` across the entire request. Some upstream clients (e.g. IDE
-    agents) can exceed this, which causes a 400.
-
-    We keep the first `max_blocks` occurrences (in a stable traversal order)
-    and remove `cache_control` from any additional blocks.
-    """
-
-    def _walk(value: Any, state: dict[str, int]) -> None:
-        # Anthropic's `cache_control` shows up on "content blocks", but different
-        # clients nest those blocks in different places (system, messages,
-        # tool_result content, tool inputs, etc.). Walk the full JSON structure
-        # so we reliably stay under the upstream cap.
-        if isinstance(value, dict):
-            if "cache_control" in value:
-                state["seen"] += 1
-                if state["seen"] > max_blocks:
-                    value.pop("cache_control", None)
-                    state["stripped"] += 1
-            for v in value.values():
-                _walk(v, state)
-            return
-        if isinstance(value, list):
-            for item in value:
-                _walk(item, state)
-            return
-
-    state = {"seen": 0, "stripped": 0}
-
-    _walk(body, state)
-
-    return body, state["stripped"]
+def _enforce_cache_cap(body: dict[str, Any], log_context: str) -> dict[str, Any]:
+    body, stripped = cache_control_cap.strip_excess_cache_control(body, max_blocks=4)
+    if stripped:
+        logger.warning(
+            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit (%s)",
+            stripped,
+            log_context,
+        )
+    return body
 
 
 async def handle(request: Request) -> Response:
@@ -194,12 +171,7 @@ async def handle(request: Request) -> Response:
 
     # Safety: enforce Anthropic's cap on cache_control blocks for ALL requests.
     # This prevents upstream 400s when ANY caller adds more than allowed.
-    body, stripped = _strip_excess_cache_control(body, max_blocks=4)
-    if stripped:
-        logger.warning(
-            "interceptor: stripped %d excess cache_control blocks to satisfy upstream limit",
-            stripped,
-        )
+    body = _enforce_cache_cap(body, "incoming")
 
     # Aux calls (title gen, topic detection, summarization) ship no `tools`
     # and a tiny system prompt. They aren't part of the user's main
@@ -215,6 +187,9 @@ async def handle(request: Request) -> Response:
     # Merge into canonical BEFORE classifying. The bar chart, the held copy,
     # the snapshot replay, and the upstream forward all see the same canonical.
     body = await conversation_state.sync(body)
+    # Canonical can retain cache_control from prior turns while each incoming
+    # request was stripped separately — re-apply the cap to the merged body.
+    body = _enforce_cache_cap(body, "post-sync canonical")
 
     bb_ingest.schedule_raw_incoming(pre_sync, request_id)
     bb_ingest.schedule_canonical_synced(copy.deepcopy(body), request_id)
@@ -283,6 +258,7 @@ async def handle(request: Request) -> Response:
                     held.edited_sections,
                     request_id=request_id,
                 )
+                body = _enforce_cache_cap(body, "post-commit_edits")
         finally:
             gating.release(request_id)
             # Drop this request from the held queue regardless of position —

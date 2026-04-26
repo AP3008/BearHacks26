@@ -72,7 +72,21 @@ def rotate_session() -> None:
 
 
 def _content_cap() -> int:
-    return int(os.getenv("BACKBOARD_CONTENT_CAP", "12000"))
+    # Keep this conservative: very large payloads tend to cause intermittent 5xxs
+    # on some memory backends / embedding pipelines.
+    return int(os.getenv("BACKBOARD_CONTENT_CAP", "6000"))
+
+
+def _ingest_throttle_s() -> float:
+    """Optional tiny delay between memory writes to avoid burst overload."""
+    raw = (os.getenv("BACKBOARD_INGEST_THROTTLE_MS", "") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        ms = float(raw)
+    except ValueError:
+        return 0.0
+    return max(0.0, ms / 1000.0)
 
 
 def _raw_summary(body: dict[str, Any]) -> str:
@@ -173,6 +187,9 @@ async def _add_canonical_slot(
     )
     if mid:
         _memory_id_by_key[message_key] = mid
+    throttle_s = _ingest_throttle_s()
+    if throttle_s > 0:
+        await asyncio.sleep(throttle_s)
 
 
 async def _ingest_canonical_body(body: dict[str, Any], request_id: str) -> None:

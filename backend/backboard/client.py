@@ -87,48 +87,67 @@ def _is_retryable_status(status_code: int) -> bool:
     return status_code == 429 or status_code in (500, 502, 503, 504)
 
 
+def _retry_after_s(resp: httpx.Response) -> float | None:
+    raw = resp.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 async def _request_with_retry(
     *,
     request_name: str,
     send: "callable[[], Any]",
+    context: dict[str, Any] | None = None,
 ) -> Optional[httpx.Response]:
     max_attempts = _retry_max_attempts()
     base_delay_s = _retry_base_delay_s()
     max_delay_s = _retry_max_delay_s()
 
     last_exc: Exception | None = None
+    last_status: int | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             resp = await send()
             if not _is_retryable_status(resp.status_code):
                 return resp
 
+            last_status = resp.status_code
             body_preview = (resp.text or "")[:400]
             logger.warning(
-                "backboard: %s retryable HTTP %s attempt=%s/%s body=%s",
+                "backboard: %s retryable HTTP %s attempt=%s/%s body=%s ctx=%s",
                 request_name,
                 resp.status_code,
                 attempt,
                 max_attempts,
                 body_preview,
+                context or {},
             )
         except (httpx.TimeoutException, httpx.NetworkError) as e:
             last_exc = e
             logger.warning(
-                "backboard: %s network error attempt=%s/%s err=%s",
+                "backboard: %s network error attempt=%s/%s err=%s ctx=%s",
                 request_name,
                 attempt,
                 max_attempts,
                 repr(e),
+                context or {},
             )
 
         if attempt >= max_attempts:
             break
 
-        # Full jitter exponential backoff.
-        exp = base_delay_s * (2 ** (attempt - 1))
-        delay_s = min(max_delay_s, exp)
-        await asyncio.sleep(random.random() * delay_s)
+        # Prefer server-provided backoff when present, otherwise full-jitter exponential.
+        retry_after_s = _retry_after_s(resp) if "resp" in locals() else None
+        if retry_after_s is not None and retry_after_s > 0:
+            await asyncio.sleep(min(max_delay_s, retry_after_s))
+        else:
+            exp = base_delay_s * (2 ** (attempt - 1))
+            delay_s = min(max_delay_s, exp)
+            await asyncio.sleep(random.random() * delay_s)
 
     if last_exc:
         logger.warning(
@@ -137,6 +156,14 @@ async def _request_with_retry(
             max_attempts,
             repr(last_exc),
         )
+    if last_status is not None:
+        logger.warning(
+            "backboard: %s giving up after %s attempts last_http=%s ctx=%s",
+            request_name,
+            max_attempts,
+            last_status,
+            context or {},
+        )
     return None
 
 
@@ -144,12 +171,20 @@ async def add_memory(*, content: str, metadata: dict[str, Any]) -> Optional[str]
     c = _client_or_none()
     if c is None:
         return None
+    ctx = {
+        "content_len": len(content or ""),
+        "kind": metadata.get("kind"),
+        "request_id": metadata.get("request_id"),
+        "section_index": metadata.get("section_index"),
+        "section_type": metadata.get("section_type"),
+    }
     resp = await _request_with_retry(
         request_name="add_memory",
         send=lambda: c.post(
             f"/assistants/{_assistant_id}/memories",
             json={"content": content, "metadata": metadata},
         ),
+        context=ctx,
     )
     if resp is None:
         return None
