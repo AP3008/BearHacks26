@@ -23,6 +23,90 @@ interface DecoratedHighlight {
   reason: string;
 }
 
+const isWs = (ch: string) => /\s/u.test(ch);
+
+/**
+ * Expands a half-open [start, end) span to whitespace delimiters. Mid-word
+ * ranges grow to the full word. Whitespace-only ranges grow to a contiguous
+ * space run (no adjacent words are absorbed).
+ */
+function expandHighlightToWhitespaceBoundaries(
+  content: string,
+  start: number,
+  end: number,
+): { start: number; end: number } {
+  const n = content.length;
+  if (n === 0) {
+    return { start: 0, end: 0 };
+  }
+  let s = Math.max(0, Math.min(start, n));
+  let e = Math.max(0, Math.min(end, n));
+  if (e < s) {
+    const t = s;
+    s = e;
+    e = t;
+  }
+
+  if (e > s) {
+    let sMin = s;
+    while (sMin < e && sMin < n && isWs(content[sMin]!)) sMin++;
+    if (sMin >= e) {
+      let a = s;
+      while (a > 0 && isWs(content[a - 1]!)) a--;
+      let b = e;
+      while (b < n && isWs(content[b]!)) b++;
+      return { start: a, end: b };
+    }
+    let sMax = e - 1;
+    while (sMax >= s && sMax >= 0 && isWs(content[sMax]!)) sMax--;
+    s = sMin;
+    while (s > 0 && !isWs(content[s - 1]!)) s--;
+    e = sMax + 1;
+    while (e < n && !isWs(content[e]!)) e++;
+    return { start: s, end: e };
+  }
+
+  if (s >= n) {
+    return { start: n, end: n };
+  }
+  if (isWs(content[s]!)) {
+    let a = s;
+    while (a > 0 && isWs(content[a - 1]!)) a--;
+    let b = s;
+    while (b < n && isWs(content[b]!)) b++;
+    return { start: a, end: b };
+  }
+  let left = s;
+  while (left > 0 && !isWs(content[left - 1]!)) left--;
+  let right = s;
+  while (right < n && !isWs(content[right]!)) right++;
+  return { start: left, end: right };
+}
+
+function mergeDecoratedHighlights(
+  items: readonly DecoratedHighlight[],
+): DecoratedHighlight[] {
+  if (items.length === 0) return [];
+  const sorted = [...items].sort((a, b) => a.start - b.start || a.end - b.end);
+  const out: DecoratedHighlight[] = [];
+  let cur: DecoratedHighlight = { ...sorted[0]! };
+  for (let i = 1; i < sorted.length; i++) {
+    const h = sorted[i]!;
+    if (h.start <= cur.end) {
+      cur = {
+        start: cur.start,
+        end: Math.max(cur.end, h.end),
+        reason: cur.reason || h.reason,
+      };
+    } else {
+      out.push(cur);
+      cur = { ...h };
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
 const TYPE_LABEL: Record<string, string> = {
   system: "System prompt",
   tool_def: "Tool definition",
@@ -229,16 +313,29 @@ export function EditorPanel({
     return [];
   }, [gemmaFlag]);
 
+  const expandedHighlights = useMemo(() => {
+    if (resolvedHighlights.length === 0) return [];
+    const expanded = resolvedHighlights.map((h) => {
+      const { start, end } = expandHighlightToWhitespaceBoundaries(
+        content,
+        h.start,
+        h.end,
+      );
+      return { ...h, start, end };
+    }).filter((h) => h.start < h.end);
+    return mergeDecoratedHighlights(expanded);
+  }, [resolvedHighlights, content]);
+
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
     const model = editor.getModel();
-    if (!model || resolvedHighlights.length === 0) {
+    if (!model || expandedHighlights.length === 0) {
       decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
       return;
     }
-    const newDecorations: monacoNs.editor.IModelDeltaDecoration[] = resolvedHighlights.map((h) => {
+    const newDecorations: monacoNs.editor.IModelDeltaDecoration[] = expandedHighlights.map((h) => {
       const start = Math.max(0, Math.min(h.start, content.length));
       const end = Math.max(start, Math.min(h.end, content.length));
       const startPos = model.getPositionAt(start);
