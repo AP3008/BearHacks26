@@ -16,10 +16,10 @@ export class ProxyManager {
   async start(port: number): Promise<void> {
     if (this.running) return;
 
-    const cfg = vscode.workspace.getConfiguration("contextlens");
+    const cfg = vscode.workspace.getConfiguration("autonomy");
     const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspace) {
-      throw new Error("ContextLens needs an open workspace folder.");
+      throw new Error("Autonomy needs an open workspace folder.");
     }
 
     const backendDir =
@@ -54,7 +54,7 @@ export class ProxyManager {
       this.stop();
       throw new Error(
         `Proxy did not become ready on port ${port}: ${(err as Error).message}. ` +
-          `Check the ContextLens output channel for uvicorn logs.`,
+          `Check the Autonomy output channel for uvicorn logs.`,
       );
     });
 

@@ -638,7 +638,7 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: "spring", stiffness: 200, damping: 28 }}
         >
-          <h1>ContextLens</h1>
+          <h1>Autonomy</h1>
           <p>Waiting for the next Claude Code API call…</p>
           <p className="hint">
             Run Claude Code with{" "}

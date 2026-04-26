@@ -35,7 +35,7 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("contextlens")
+logger = logging.getLogger("autonomy")
 
 ANTHROPIC_UPSTREAM_URL = os.getenv("ANTHROPIC_UPSTREAM_URL", "https://api.anthropic.com")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
     await backboard_client.startup()
     await analyzer.probe()
     logger.info(
-        "contextlens proxy ready (upstream=%s, gemma_available=%s, backboard=%s)",
+        "autonomy proxy ready (upstream=%s, gemma_available=%s, backboard=%s)",
         ANTHROPIC_UPSTREAM_URL,
         analyzer.is_available(),
         backboard_client.is_configured(),

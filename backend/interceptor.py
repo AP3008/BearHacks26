@@ -172,7 +172,7 @@ async def handle(request: Request) -> Response:
 
     raw = await request.body()
     headers = dict(request.headers)
-    bb_ingest.set_user_key(headers.get("x-contextlens-user", "local"))
+    bb_ingest.set_user_key(headers.get("x-autonomy-user", "local"))
 
     try:
         body: dict[str, Any] = json.loads(raw)
@@ -234,7 +234,7 @@ async def handle(request: Request) -> Response:
         logger.warning(
             "interceptor: gating wanted to hold request_id=%s but no UI "
             "client is connected; passing through unheld. Open the "
-            "ContextLens panel to gate the next request.",
+            "Autonomy panel to gate the next request.",
             request_id,
         )
 

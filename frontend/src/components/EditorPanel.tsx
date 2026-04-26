@@ -148,7 +148,7 @@ function defineTheme(monaco: Monaco) {
   monaco.languages.css.cssDefaults.setOptions({ validate: false });
   monaco.languages.css.scssDefaults.setOptions({ validate: false });
   monaco.languages.html.htmlDefaults.setOptions({ validate: false });
-  monaco.editor.defineTheme("contextlens", {
+  monaco.editor.defineTheme("autonomy", {
     base: "vs-dark",
     inherit: true,
     rules: [],
@@ -191,7 +191,7 @@ export function EditorPanel({
       editorRef.current = editor;
       monacoRef.current = monaco;
       defineTheme(monaco);
-      monaco.editor.setTheme("contextlens");
+      monaco.editor.setTheme("autonomy");
       // Click-to-accept on a Gemma decoration: detect a click inside any
       // decoration range and splice that range out.
       editor.onMouseDown((e) => {
@@ -346,7 +346,7 @@ export function EditorPanel({
               value={content}
               onMount={handleMount}
               onChange={onEditorChange}
-              theme="contextlens"
+              theme="autonomy"
               options={{
                 minimap: { enabled: false },
                 wordWrap: "on",

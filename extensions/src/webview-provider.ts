@@ -22,14 +22,14 @@ export class WebviewProvider {
     const distDir = this.resolveDistDir();
     if (!distDir) {
       throw new Error(
-        "ContextLens: could not find frontend/dist. Run `npm run build` in frontend/ " +
-          "or set contextlens.webviewDistDir.",
+        "Autonomy: could not find frontend/dist. Run `npm run build` in frontend/ " +
+          "or set autonomy.webviewDistDir.",
       );
     }
 
     this.panel = vscode.window.createWebviewPanel(
-      "contextlens",
-      "ContextLens",
+      "autonomy",
+      "Autonomy",
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
@@ -47,7 +47,7 @@ export class WebviewProvider {
   }
 
   private resolveDistDir(): string | null {
-    const cfg = vscode.workspace.getConfiguration("contextlens");
+    const cfg = vscode.workspace.getConfiguration("autonomy");
     const explicit = cfg.get<string>("webviewDistDir");
     if (explicit && fs.existsSync(path.join(explicit, "index.html"))) return explicit;
 
