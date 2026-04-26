@@ -9,19 +9,19 @@ let provider: WebviewProvider | null = null;
 let output: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext) {
-  output = vscode.window.createOutputChannel("ContextLens");
+  output = vscode.window.createOutputChannel("Autonomy");
   context.subscriptions.push(output);
 
   proxyManager = new ProxyManager(output);
   provider = new WebviewProvider(context, output);
 
-  const openCmd = vscode.commands.registerCommand("contextlens.open", async () => {
+  const openCmd = vscode.commands.registerCommand("autonomy.open", async () => {
     const port = vscode.workspace
-      .getConfiguration("contextlens")
+      .getConfiguration("autonomy")
       .get<number>("proxyPort", 8080);
 
     const autoStart = vscode.workspace
-      .getConfiguration("contextlens")
+      .getConfiguration("autonomy")
       .get<boolean>("autoStartProxy", true);
 
     if (autoStart && proxyManager && !proxyManager.running) {
@@ -29,7 +29,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await proxyManager.start(port);
       } catch (err) {
         vscode.window.showErrorMessage(
-          `ContextLens: failed to start proxy — ${(err as Error).message}. ` +
+          `Autonomy: failed to start proxy — ${(err as Error).message}. ` +
             `You can disable auto-start in Settings and run uvicorn yourself.`,
         );
       }
@@ -51,15 +51,15 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   const restartCmd = vscode.commands.registerCommand(
-    "contextlens.restartProxy",
+    "autonomy.restartProxy",
     async () => {
       if (!proxyManager) return;
       const port = vscode.workspace
-        .getConfiguration("contextlens")
+        .getConfiguration("autonomy")
         .get<number>("proxyPort", 8080);
       await proxyManager.stop();
       await proxyManager.start(port);
-      vscode.window.showInformationMessage("ContextLens: proxy restarted.");
+      vscode.window.showInformationMessage("Autonomy: proxy restarted.");
     },
   );
 

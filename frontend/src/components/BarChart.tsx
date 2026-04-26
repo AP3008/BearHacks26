@@ -210,13 +210,39 @@ export function BarChart({
   // the latest column stay in view as the conversation grows. Either pin
   // releases the moment the user manually scrolls away from that edge, so the
   // user can scroll up/left to read older content without getting yanked back.
+  // userScrolledRef latches once the user manually scrolls — guards against
+  // programmatic scrollLeft/scrollTop assignments re-triggering onScroll and
+  // re-asserting the stick within threshold.
+  const userScrolledHorizRef = useRef(false);
+  const userScrolledVertRef = useRef(false);
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const distFromRight = el.scrollWidth - (el.scrollLeft + el.clientWidth);
-    stickRightRef.current = distFromRight <= STICK_THRESHOLD_PX;
+    if (userScrolledHorizRef.current) {
+      stickRightRef.current = distFromRight <= STICK_THRESHOLD_PX;
+    }
     const distFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
-    stickBottomRef.current = distFromBottom <= STICK_THRESHOLD_PX;
+    if (userScrolledVertRef.current) {
+      stickBottomRef.current = distFromBottom <= STICK_THRESHOLD_PX;
+    }
+  }, []);
+
+  // Wheel/touch/keyboard inputs latch the "user has taken control" flag, so
+  // the next onScroll honors their position even if it's still near the edge.
+  const onWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(e.deltaX) > 0) userScrolledHorizRef.current = true;
+    if (Math.abs(e.deltaY) > 0) userScrolledVertRef.current = true;
+  }, []);
+  const onPointerDownScroller = useCallback(() => {
+    userScrolledHorizRef.current = true;
+    userScrolledVertRef.current = true;
+  }, []);
+  const onKeyDownScroller = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const horiz = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    const vert = ["ArrowUp", "ArrowDown", "PageUp", "PageDown"];
+    if (horiz.includes(e.key)) userScrolledHorizRef.current = true;
+    if (vert.includes(e.key)) userScrolledVertRef.current = true;
   }, []);
 
   const totalSections = sections.length;
@@ -272,7 +298,15 @@ export function BarChart({
 
   return (
     <div className="bar-chart">
-      <div ref={scrollerRef} className="chart-scroll" onScroll={onScroll}>
+      <div
+        ref={scrollerRef}
+        className="chart-scroll"
+        onScroll={onScroll}
+        onWheel={onWheel}
+        onPointerDown={onPointerDownScroller}
+        onKeyDown={onKeyDownScroller}
+        tabIndex={0}
+      >
         <svg
           width={innerWidth}
           height={Math.max(svgHeight, 1)}

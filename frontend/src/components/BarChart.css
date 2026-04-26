@@ -3,16 +3,37 @@
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  min-width: 0;
   background: var(--cl-bg);
 }
 
 .chart-scroll {
   position: relative;
   flex: 1 1 auto;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   min-height: 0;
+  min-width: 0;
   scrollbar-color: var(--cl-track-thumb) transparent;
   scrollbar-width: thin;
+}
+
+/* Ensure horizontal scrollbar is visible in WebKit (VS Code webview) so users
+   can see they can scroll right when columns overflow. macOS overlay scrollbars
+   would otherwise hide it until interaction. */
+.chart-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.chart-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chart-scroll::-webkit-scrollbar-thumb {
+  background: var(--cl-track-thumb);
+  border-radius: 5px;
+}
+.chart-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .chart-svg {

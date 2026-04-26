@@ -1,9 +1,9 @@
 {
-  "name": "contextlens",
-  "displayName": "ContextLens",
+  "name": "autonomy",
+  "displayName": "Autonomy",
   "description": "Visualize, gate, and trim Claude Code's context window in real time.",
   "version": "0.0.1",
-  "publisher": "contextlens",
+  "publisher": "autonomy",
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
@@ -14,38 +14,38 @@
   "contributes": {
     "commands": [
       {
-        "command": "contextlens.open",
-        "title": "ContextLens: Open Panel"
+        "command": "autonomy.open",
+        "title": "Autonomy: Open Panel"
       },
       {
-        "command": "contextlens.restartProxy",
-        "title": "ContextLens: Restart Backend Proxy"
+        "command": "autonomy.restartProxy",
+        "title": "Autonomy: Restart Backend Proxy"
       }
     ],
     "configuration": {
-      "title": "ContextLens",
+      "title": "Autonomy",
       "properties": {
-        "contextlens.proxyPort": {
+        "autonomy.proxyPort": {
           "type": "number",
           "default": 8080,
           "description": "Port the FastAPI proxy listens on."
         },
-        "contextlens.autoStartProxy": {
+        "autonomy.autoStartProxy": {
           "type": "boolean",
           "default": true,
           "description": "Spawn the FastAPI proxy automatically when the panel opens. Disable if you run the backend yourself."
         },
-        "contextlens.backendDir": {
+        "autonomy.backendDir": {
           "type": "string",
           "default": "",
           "description": "Absolute path to the backend/ directory. Empty = auto-detect ('<workspace>/backend')."
         },
-        "contextlens.pythonPath": {
+        "autonomy.pythonPath": {
           "type": "string",
           "default": "",
           "description": "Path to the Python interpreter used to run uvicorn. Empty = auto-detect 'backend/venv/bin/python', falling back to 'python3'."
         },
-        "contextlens.webviewDistDir": {
+        "autonomy.webviewDistDir": {
           "type": "string",
           "default": "",
           "description": "Absolute path to the built React app (frontend/dist). Empty = auto-detect ('<workspace>/frontend/dist')."
