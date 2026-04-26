@@ -30,9 +30,13 @@ _probe_task: Optional[asyncio.Task] = None
 _unreachable_logged: bool = False
 
 
+def _normalize_host(host: str) -> str:
+    return host.rstrip("/") or "http://localhost:11434"
+
+
 def configure(host: str, model: str) -> None:
     global _host, _model, _chat_timeout_s, _probe_interval_s
-    _host = host
+    _host = _normalize_host(host)
     _model = model
     _chat_timeout_s = float(os.getenv("GEMMA_CHAT_TIMEOUT_S", "120"))
     _probe_interval_s = float(os.getenv("GEMMA_PROBE_INTERVAL_S", "10"))
