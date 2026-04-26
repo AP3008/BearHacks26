@@ -1,4 +1,7 @@
-<h1 align="center">Autonomy</h1>
+<p align="center">
+  <img width=350px, src="./assets/Autonomy.png"/>
+  <h1 align="center">Autonomy</h1>
+</p>
 
 **Autonomy** is a VS Code extension that intercepts every Claude Code API call in real time, letting you visualize the full context window as an interactive bar chart, delete or edit individual message sections, and optionally hold requests for your approval before they reach Anthropic.
 
