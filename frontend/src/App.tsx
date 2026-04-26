@@ -536,24 +536,35 @@ export default function App() {
   const onEditSection = useCallback(
     (index: number, content: string) => {
       dispatch({ type: "edit_section", index, content });
-      // Same auto-commit path as confirmDeletion: when the request isn't
-      // held, the editor save would otherwise be wiped on the next prompt.
-      const cr = state.currentRequest;
-      if (cr && !cr.held) {
-        const editedMap = new Map(state.editedSections);
-        editedMap.set(index, content);
-        const editedSections: EditedSection[] = [...editedMap].map(
-          ([i, newContent]) => ({ index: i, newContent }),
-        );
-        senders.sendCommitEditsNow(
-          cr.requestId,
-          [...state.removedIndices],
-          editedSections,
-        );
-      }
     },
-    [state.currentRequest, state.removedIndices, state.editedSections, senders],
+    [],
   );
+
+  // Commit accumulated edits when the user dismisses the editor in auto-mode.
+  // Per-keystroke commits would round-trip through the backend as a fresh
+  // top_level snapshot rebroadcast, which the reducer treats as a new turn
+  // and closes the editor mid-type. Deferring to close keeps typing local.
+  const handleCloseEditor = useCallback(() => {
+    const cr = state.currentRequest;
+    const idx = state.editorOpenForIndex;
+    if (cr && !cr.held && idx != null && state.editedSections.has(idx)) {
+      const editedSections: EditedSection[] = [...state.editedSections].map(
+        ([i, newContent]) => ({ index: i, newContent }),
+      );
+      senders.sendCommitEditsNow(
+        cr.requestId,
+        [...state.removedIndices],
+        editedSections,
+      );
+    }
+    dispatch({ type: "close_editor" });
+  }, [
+    state.currentRequest,
+    state.editorOpenForIndex,
+    state.editedSections,
+    state.removedIndices,
+    senders,
+  ]);
 
   const onDeleteFromEditor = useCallback(
     (index: number) => {
@@ -692,7 +703,7 @@ export default function App() {
               onRequestFlagging={requestFlagging}
               onSave={(text) => onEditSection(editorSection.index, text)}
               onDelete={() => onDeleteFromEditor(editorSection.index)}
-              onClose={() => dispatch({ type: "close_editor" })}
+              onClose={handleCloseEditor}
             />
           )}
         </AnimatePresence>
