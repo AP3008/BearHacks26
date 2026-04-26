@@ -83,7 +83,21 @@ function expandHighlightToWhitespaceBoundaries(
   return { start: left, end: right };
 }
 
+function isWhitespaceOnlyGap(content: string, gapStart: number, gapEnd: number): boolean {
+  const n = content.length;
+  for (let i = Math.max(0, gapStart); i < Math.min(gapEnd, n); i++) {
+    if (!isWs(content[i]!)) return false;
+  }
+  return true;
+}
+
+/**
+ * Merges overlapping/touching ranges, and ranges separated only by whitespace
+ * (e.g. [0,44) and [45,103) where index 44 is a space) so the gap is not
+ * unstyled between consecutive Gemma word spans.
+ */
 function mergeDecoratedHighlights(
+  content: string,
   items: readonly DecoratedHighlight[],
 ): DecoratedHighlight[] {
   if (items.length === 0) return [];
@@ -92,7 +106,11 @@ function mergeDecoratedHighlights(
   let cur: DecoratedHighlight = { ...sorted[0]! };
   for (let i = 1; i < sorted.length; i++) {
     const h = sorted[i]!;
-    if (h.start <= cur.end) {
+    const gapStart = cur.end;
+    const gapEnd = h.start;
+    const shouldMerge =
+      h.start <= cur.end || isWhitespaceOnlyGap(content, gapStart, gapEnd);
+    if (shouldMerge) {
       cur = {
         start: cur.start,
         end: Math.max(cur.end, h.end),
@@ -276,9 +294,14 @@ export function EditorPanel({
       monacoRef.current = monaco;
       defineTheme(monaco);
       monaco.editor.setTheme("autonomy");
-      // Click-to-accept on a Gemma decoration: detect a click inside any
+      // Double-click-to-accept on a Gemma decoration: detect a click inside any
       // decoration range and splice that range out.
       editor.onMouseDown((e) => {
+        const clickCount =
+          // Monaco forwards browser click count as `detail` (sometimes nested).
+          (e.event as unknown as { detail?: number; browserEvent?: { detail?: number } })
+            .detail ?? (e.event as unknown as { browserEvent?: { detail?: number } }).browserEvent?.detail;
+        if (clickCount !== 2) return;
         const target = e.target;
         const pos = target.position;
         if (!pos) return;
@@ -323,7 +346,7 @@ export function EditorPanel({
       );
       return { ...h, start, end };
     }).filter((h) => h.start < h.end);
-    return mergeDecoratedHighlights(expanded);
+    return mergeDecoratedHighlights(content, expanded);
   }, [resolvedHighlights, content]);
 
   useEffect(() => {
