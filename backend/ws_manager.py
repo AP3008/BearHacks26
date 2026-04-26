@@ -49,6 +49,16 @@ async def _send_snapshot(ws: WebSocket) -> None:
         logger.warning("ws: snapshot send failed: %s", exc)
 
 
+async def broadcast_snapshot() -> None:
+    """Push a fresh snapshot to the connected panel. Used when out-of-band
+    state changes (Gemma availability flipping when Ollama comes online or
+    crashes) need to reach the UI without waiting for the next reconnect."""
+    sock = _socket
+    if sock is None:
+        return
+    await _send_snapshot(sock)
+
+
 async def connect(ws: WebSocket) -> None:
     global _socket
     await ws.accept()

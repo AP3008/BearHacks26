@@ -76,6 +76,10 @@ async def lifespan(app: FastAPI):
     await forwarder.startup()
     await backboard_client.startup()
     await analyzer.probe()
+    # Periodic re-probe so the UI auto-recovers when Ollama is started after
+    # the backend (or restarts mid-session). Without this, the startup probe
+    # latches `_available=False` forever.
+    analyzer.start_probe_loop()
     logger.info(
         "autonomy proxy ready (upstream=%s, gemma_available=%s, backboard=%s)",
         ANTHROPIC_UPSTREAM_URL,
@@ -85,6 +89,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await analyzer.stop_probe_loop()
         await backboard_client.shutdown()
         await forwarder.shutdown()
 

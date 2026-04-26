@@ -22,46 +22,140 @@ _host: str = "http://localhost:11434"
 _model: str = "gemma4:e4b"
 _client: Optional[Any] = None
 _chat_timeout_s: float = 120.0
+_probe_interval_s: float = 10.0
+_probe_task: Optional[asyncio.Task] = None
+# Tracks whether the most recent probe failure has already been logged, so the
+# periodic loop doesn't spam the same warning every interval. Reset when the
+# next probe succeeds.
+_unreachable_logged: bool = False
 
 
 def configure(host: str, model: str) -> None:
-    global _host, _model, _chat_timeout_s
+    global _host, _model, _chat_timeout_s, _probe_interval_s
     _host = host
     _model = model
     _chat_timeout_s = float(os.getenv("GEMMA_CHAT_TIMEOUT_S", "120"))
+    _probe_interval_s = float(os.getenv("GEMMA_PROBE_INTERVAL_S", "10"))
 
 
 def is_available() -> bool:
     return _available
 
 
+def _model_matches(configured: str, available: list[str]) -> Optional[str]:
+    """Return the matching entry from `available` or None.
+
+    Exact match first (the happy path the user's `gemma4:e4b` setup hits).
+    If that fails, fall back to base-name match (`gemma4` matches
+    `gemma4:latest`, `gemma4:e4b`, etc.) so the check survives Ollama's
+    occasional tag-normalization quirks across versions.
+    """
+    if configured in available:
+        return configured
+    base = configured.split(":", 1)[0]
+    for name in available:
+        if name == base or name.split(":", 1)[0] == base:
+            return name
+    return None
+
+
 async def probe() -> None:
-    global _available, _client
+    global _available, _client, _unreachable_logged
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{_host}/api/tags")
         if resp.status_code != 200:
             raise RuntimeError(f"ollama /api/tags returned {resp.status_code}")
         models = [m.get("name", "") for m in resp.json().get("models", [])]
-        if _model not in models:
-            logger.warning(
-                "gemma: model %s not present in ollama (have %s); flagging disabled",
-                _model,
-                models,
-            )
+        match = _model_matches(_model, models)
+        if match is None:
+            # Log once per failed-state entry so a missing model doesn't spam
+            # every probe interval; reset the latch on success.
+            if not _unreachable_logged:
+                logger.warning(
+                    "gemma: model %s not present in ollama (have %s); flagging disabled",
+                    _model,
+                    models,
+                )
+                _unreachable_logged = True
             _available = False
             return
+        if match != _model:
+            logger.info(
+                "gemma: model %s matched via base-name fallback to %s",
+                _model,
+                match,
+            )
         # NOTE: we intentionally do not use the `ollama` python client for chat
         # calls. Some Ollama response fields (notably `message.thinking`) are
         # not preserved by the client's typed models in certain versions,
         # which can make `message.content` appear empty even when the model
         # returned useful output. Using httpx keeps the raw JSON intact.
         _client = True
+        if not _available:
+            logger.info("gemma: available (model=%s, host=%s)", _model, _host)
         _available = True
-        logger.info("gemma: available (model=%s, host=%s)", _model, _host)
+        _unreachable_logged = False
     except Exception as exc:
-        logger.warning("gemma: ollama not reachable at %s (%s); flagging disabled", _host, exc)
+        if not _unreachable_logged:
+            logger.warning(
+                "gemma: ollama not reachable at %s (%s); flagging disabled",
+                _host,
+                exc,
+            )
+            _unreachable_logged = True
         _available = False
+
+
+async def _probe_loop() -> None:
+    """Re-probe Ollama on a fixed interval so the panel auto-recovers when
+    Ollama is started after the backend, restarted, or crashes mid-session.
+    Pushes a snapshot to the connected panel when availability flips so the
+    UI updates live without a reload."""
+    # Lazy import: ws_manager imports from models which imports nothing
+    # cyclic, but keeping this local mirrors the lifespan-time wiring.
+    import ws_manager
+    while True:
+        try:
+            await asyncio.sleep(_probe_interval_s)
+            was_available = _available
+            await probe()
+            if was_available != _available:
+                logger.info(
+                    "gemma: availability changed (%s -> %s); broadcasting snapshot",
+                    was_available,
+                    _available,
+                )
+                try:
+                    await ws_manager.broadcast_snapshot()
+                except Exception:
+                    logger.exception("gemma: snapshot broadcast failed")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Don't let a transient failure kill the loop — that would
+            # silently disable auto-recovery for the rest of the session.
+            logger.exception("gemma: probe loop iteration crashed")
+
+
+def start_probe_loop() -> None:
+    global _probe_task
+    if _probe_task is not None and not _probe_task.done():
+        return
+    _probe_task = asyncio.create_task(_probe_loop(), name="gemma-probe-loop")
+
+
+async def stop_probe_loop() -> None:
+    global _probe_task
+    task = _probe_task
+    _probe_task = None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 async def _wait_for_idle(max_wait_s: float = 8.0) -> None:
