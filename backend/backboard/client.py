@@ -36,7 +36,7 @@ def is_configured() -> bool:
 async def startup() -> None:
     global _client
     if not is_configured():
-        logger.info("backboard: disabled (missing BACKBOARD_API_KEY or BACKBOARD_ASSISTANT_ID)")
+        logger.debug("backboard: disabled (missing BACKBOARD_API_KEY or BACKBOARD_ASSISTANT_ID)")
         return
     timeout = float(os.getenv("BACKBOARD_HTTP_TIMEOUT_S", "30"))
     _client = httpx.AsyncClient(
@@ -45,7 +45,7 @@ async def startup() -> None:
         timeout=timeout,
     )
     aid = _assistant_id
-    logger.info(
+    logger.debug(
         "backboard: client ready (assistant_id=%s)",
         (aid[:8] + "…") if len(aid) > 8 else aid,
     )
@@ -117,7 +117,7 @@ async def _request_with_retry(
 
             last_status = resp.status_code
             body_preview = (resp.text or "")[:400]
-            logger.warning(
+            logger.debug(
                 "backboard: %s retryable HTTP %s attempt=%s/%s body=%s ctx=%s",
                 request_name,
                 resp.status_code,
@@ -128,7 +128,7 @@ async def _request_with_retry(
             )
         except (httpx.TimeoutException, httpx.NetworkError) as e:
             last_exc = e
-            logger.warning(
+            logger.debug(
                 "backboard: %s network error attempt=%s/%s err=%s ctx=%s",
                 request_name,
                 attempt,
@@ -150,14 +150,14 @@ async def _request_with_retry(
             await asyncio.sleep(random.random() * delay_s)
 
     if last_exc:
-        logger.warning(
+        logger.debug(
             "backboard: %s giving up after %s attempts err=%s",
             request_name,
             max_attempts,
             repr(last_exc),
         )
     if last_status is not None:
-        logger.warning(
+        logger.debug(
             "backboard: %s giving up after %s attempts last_http=%s ctx=%s",
             request_name,
             max_attempts,
@@ -189,7 +189,7 @@ async def add_memory(*, content: str, metadata: dict[str, Any]) -> Optional[str]
     if resp is None:
         return None
     if resp.status_code not in (200, 201):
-        logger.warning(
+        logger.debug(
             "backboard: add_memory HTTP %s body=%s",
             resp.status_code,
             (resp.text or "")[:400],
@@ -198,7 +198,7 @@ async def add_memory(*, content: str, metadata: dict[str, Any]) -> Optional[str]
     data = resp.json()
     mid = data.get("memory_id") or data.get("id")
     if not isinstance(mid, str):
-        logger.warning("backboard: add_memory missing id in response keys=%s", list(data.keys()))
+        logger.debug("backboard: add_memory missing id in response keys=%s", list(data.keys()))
         return None
     return mid
 
@@ -217,7 +217,7 @@ async def update_memory(*, memory_id: str, content: str, metadata: dict[str, Any
     if resp is None:
         return False
     if resp.status_code != 200:
-        logger.warning(
+        logger.debug(
             "backboard: update_memory HTTP %s id=%s body=%s",
             resp.status_code,
             memory_id[:16],
@@ -241,7 +241,7 @@ async def search_memories(*, query: str, limit: int) -> list[dict[str, Any]]:
     if resp is None:
         return []
     if resp.status_code != 200:
-        logger.warning(
+        logger.debug(
             "backboard: search_memories HTTP %s body=%s",
             resp.status_code,
             (resp.text or "")[:400],
@@ -272,7 +272,7 @@ async def create_thread(*, thread_metadata: dict[str, Any] | None = None) -> Opt
     if resp is None:
         return None
     if resp.status_code not in (200, 201):
-        logger.warning(
+        logger.debug(
             "backboard: create_thread HTTP %s body=%s",
             resp.status_code,
             (resp.text or "")[:400],

@@ -68,7 +68,7 @@ def rotate_session() -> None:
     _conversation_id = _session_id
     _memory_id_by_key = {}
     _thread_id_by_conversation = {}
-    logger.info("backboard: new session_id=%s", _session_id[:12] + "…")
+    logger.debug("backboard: new session_id=%s", _session_id[:12] + "…")
 
 
 def _content_cap() -> int:
@@ -149,7 +149,7 @@ async def _tombstone_key(message_key: str) -> None:
         },
     )
     if not ok:
-        logger.warning("backboard: tombstone failed message_key=%s", message_key[:16])
+        logger.debug("backboard: tombstone failed message_key=%s", message_key[:16])
 
 
 async def _add_canonical_slot(
@@ -239,7 +239,7 @@ def schedule_raw_incoming(body: dict[str, Any], request_id: str) -> None:
             async with _ingest_lock:
                 await _ingest_raw_incoming(body, request_id)
         except Exception:
-            logger.exception("backboard: raw_incoming ingest failed")
+            logger.debug("backboard: raw_incoming ingest failed", exc_info=True)
 
     asyncio.create_task(_run())
 
@@ -253,7 +253,7 @@ def schedule_canonical_synced(body: dict[str, Any], request_id: str) -> None:
             async with _ingest_lock:
                 await _ingest_canonical_body(body, request_id)
         except Exception:
-            logger.exception("backboard: canonical ingest failed")
+            logger.debug("backboard: canonical ingest failed", exc_info=True)
 
     asyncio.create_task(_run())
 
@@ -333,7 +333,7 @@ async def apply_edits_and_reingest(
             )
             await _ingest_canonical_body(new_body, request_id)
     except Exception:
-        logger.exception("backboard: apply_edits ingest failed")
+        logger.debug("backboard: apply_edits ingest failed", exc_info=True)
 
 
 def schedule_after_edits(
