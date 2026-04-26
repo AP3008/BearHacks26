@@ -4,6 +4,7 @@
   "description": "Visualize, gate, and trim Claude Code's context window in real time.",
   "version": "0.0.1",
   "publisher": "autonomy",
+  "icon": "assets/autonomy.png",
   "private": true,
   "engines": {
     "vscode": "^1.85.0"
