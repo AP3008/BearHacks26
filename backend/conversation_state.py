@@ -210,3 +210,20 @@ async def get_canonical() -> Optional[dict[str, Any]]:
         if _canonical is None:
             return None
         return copy.deepcopy(_canonical)
+
+
+async def update_canonical(new_body: dict[str, Any]) -> None:
+    """Update the canonical conversation state with a new body. Used when
+    adding the assistant response from the streaming response back."""
+    global _canonical, _canonical_full
+    async with _lock:
+        _canonical = copy.deepcopy(new_body)
+        # Also update the full canonical to keep them in sync
+        if _canonical_full is not None:
+            _canonical_full = copy.deepcopy(new_body)
+        logger.info(
+            "conversation_state: updated canonical (messages=%d)",
+            len(_canonical.get("messages") or []),
+        )
+
+
